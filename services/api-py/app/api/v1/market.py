@@ -22,7 +22,9 @@ async def movers(kind: str = Query("top_gainers")):
         "iev_top_gainers": "MOVER_TYPE_IEVAL_TOP_GAINER",
         "ieval_top_gainer": "MOVER_TYPE_IEVAL_TOP_GAINER",
     }
-    mover_type = mapping.get(kind, kind.upper() if kind.startswith("MOVER_TYPE_") else "MOVER_TYPE_TOP_GAINER")
+    mover_type = mapping.get(
+        kind, kind.upper() if kind.startswith("MOVER_TYPE_") else "MOVER_TYPE_TOP_GAINER"
+    )
     boards = (
         "filter_stocks=FILTER_STOCKS_TYPE_MAIN_BOARD"
         "&filter_stocks=FILTER_STOCKS_TYPE_DEVELOPMENT_BOARD"

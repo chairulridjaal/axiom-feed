@@ -46,7 +46,9 @@ async def company_financials(
             "report_type": report_type,
             "statement_type": statement_type,
             "unit": structured.get("unit", "In Million"),
-            "currency": raw_data.get("default_currency", "IDR") if isinstance(raw_data, dict) else "IDR",
+            "currency": raw_data.get("default_currency", "IDR")
+            if isinstance(raw_data, dict)
+            else "IDR",
             "periods": structured.get("periods", []),
             "line_items": structured.get("line_items", []),
         }

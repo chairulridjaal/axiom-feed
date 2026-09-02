@@ -3,6 +3,7 @@
 # source: datafeed.proto
 # Protobuf Python Version: 7.35.1
 """Generated protocol buffer code."""
+
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import descriptor_pool as _descriptor_pool
 from google.protobuf import runtime_version as _runtime_version
@@ -10,58 +11,53 @@ from google.protobuf import symbol_database as _symbol_database
 from google.protobuf.internal import builder as _builder
 
 _runtime_version.ValidateProtobufRuntimeVersion(
-    _runtime_version.Domain.PUBLIC,
-    7,
-    35,
-    1,
-    '',
-    'datafeed.proto'
+    _runtime_version.Domain.PUBLIC, 7, 35, 1, "", "datafeed.proto"
 )
 # @@protoc_insertion_point(imports)
 
 _sym_db = _symbol_database.Default()
 
 
-
-
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0e\x64\x61tafeed.proto\x12\x14stockbit.datafeed.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"+\n\x06\x43hange\x12\r\n\x05value\x18\x01 \x01(\x01\x12\x12\n\npercentage\x18\x02 \x01(\x01\"\xd9\x02\n\x0cRunningTrade\x12\x32\n\x0ewebsocket_time\x18\x01 \x01(\x0b\x32\x1a.google.protobuf.Timestamp\x12\r\n\x05stock\x18\x02 \x01(\t\x12\r\n\x05price\x18\x03 \x01(\x01\x12\x0e\n\x06volume\x18\x04 \x01(\x01\x12/\n\x06\x61\x63tion\x18\x05 \x01(\x0e\x32\x1f.stockbit.datafeed.v1.TradeType\x12\x11\n\tis_global\x18\x06 \x01(\x08\x12(\n\x04time\x18\x07 \x01(\x0b\x32\x1a.google.protobuf.Timestamp\x12,\n\x06\x63hange\x18\x08 \x01(\x0b\x32\x1c.stockbit.datafeed.v1.Change\x12\x14\n\x0ctrade_number\x18\t \x01(\x03\x12\x35\n\x0cmarket_board\x18\n \x01(\x0e\x32\x1f.stockbit.datafeed.v1.BoardType\"G\n\x11RunningTradeBatch\x12\x32\n\x06trades\x18\x01 \x03(\x0b\x32\".stockbit.datafeed.v1.RunningTrade\"\x8a\x02\n\tLivePrice\x12\r\n\x05stock\x18\x01 \x01(\t\x12\r\n\x05price\x18\x02 \x01(\x01\x12\x0e\n\x06volume\x18\x03 \x01(\x01\x12\x0c\n\x04high\x18\x04 \x01(\x01\x12\x0b\n\x03low\x18\x05 \x01(\x01\x12\x12\n\nprev_close\x18\x06 \x01(\x01\x12\x11\n\tfrequency\x18\x07 \x01(\x01\x12\x0f\n\x07\x61verage\x18\n \x01(\x01\x12\x10\n\x08time_str\x18\x0b \x01(\t\x12\x0c\n\x04open\x18\x0c \x01(\x01\x12\x17\n\x0f\x63lose_indicator\x18\r \x01(\x01\x12\r\n\x05value\x18\x0e \x01(\x01\x12\x13\n\x0b\x63hange_data\x18\x0f \x01(\x0c\x12\r\n\x05\x65xtra\x18\x10 \x01(\t\x12\x10\n\x08is_index\x18\x11 \x01(\x05\"\x7f\n\tOrderbook\x12\r\n\x05stock\x18\x01 \x01(\t\x12\x0c\n\x04\x62ody\x18\x02 \x01(\t\x12\x10\n\x08sequence\x18\x03 \x01(\x03\x12\r\n\x05\x64\x65pth\x18\x04 \x01(\x03\x12\x0c\n\x04time\x18\x05 \x01(\t\x12\x11\n\ttype_flag\x18\x08 \x01(\x05\x12\x13\n\x0bserver_time\x18\t \x01(\t\"?\n\x0eOrderbookEntry\x12\r\n\x05price\x18\x01 \x01(\x01\x12\x0e\n\x06volume\x18\x02 \x01(\x01\x12\x0e\n\x06orders\x18\x03 \x01(\x05\"\xa3\x01\n\rOrderBookBody\x12\x14\n\x0cstock_symbol\x18\x01 \x01(\t\x12&\n\x03\x62id\x18\x02 \x03(\x0b\x32\x19.stockbit.datafeed.v1.Bid\x12*\n\x05offer\x18\x03 \x03(\x0b\x32\x1b.stockbit.datafeed.v1.Offer\x12(\n\x04time\x18\x04 \x01(\x0b\x32\x1a.google.protobuf.Timestamp\"!\n\x03\x42id\x12\r\n\x05price\x18\x01 \x01(\x01\x12\x0b\n\x03lot\x18\x02 \x01(\x01\"#\n\x05Offer\x12\r\n\x05price\x18\x01 \x01(\x01\x12\x0b\n\x03lot\x18\x02 \x01(\x01\"=\n\x0cPingResponse\x12-\n\ttimestamp\x18\x01 \x01(\x0b\x32\x1a.google.protobuf.Timestamp\"\x94\x03\n\x1bWebsocketWrapMessageChannel\x12;\n\rrunning_trade\x18\x01 \x01(\x0b\x32\".stockbit.datafeed.v1.RunningTradeH\x00\x12\x32\n\x04ping\x18\x02 \x01(\x0b\x32\".stockbit.datafeed.v1.PingResponseH\x00\x12=\n\x0eorderbook_body\x18\x06 \x01(\x0b\x32#.stockbit.datafeed.v1.OrderBookBodyH\x00\x12\x46\n\x13running_trade_batch\x18\x08 \x01(\x0b\x32\'.stockbit.datafeed.v1.RunningTradeBatchH\x00\x12\x34\n\tliveprice\x18\t \x01(\x0b\x32\x1f.stockbit.datafeed.v1.LivePriceH\x00\x12\x34\n\torderbook\x18\n \x01(\x0b\x32\x1f.stockbit.datafeed.v1.OrderbookH\x00\x42\x11\n\x0fmessage_channel\"<\n\x0bPingRequest\x12-\n\ttimestamp\x18\x01 \x01(\x0b\x32\x1a.google.protobuf.Timestamp\"\x98\x01\n\x10WebsocketChannel\x12\x11\n\twatchlist\x18\x01 \x03(\t\x12\x12\n\norder_book\x18\x02 \x03(\t\x12\x15\n\rrunning_trade\x18\x03 \x03(\t\x12\x1b\n\x13running_trade_batch\x18\x05 \x03(\t\x12\x11\n\tliveprice\x18\x06 \x03(\t\x12\x16\n\x0eorderbook_body\x18\x07 \x03(\t\"\x9a\x01\n\x10WebsocketRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x37\n\x07\x63hannel\x18\x02 \x01(\x0b\x32&.stockbit.datafeed.v1.WebsocketChannel\x12\x0b\n\x03key\x18\x03 \x01(\t\x12/\n\x04ping\x18\x04 \x01(\x0b\x32!.stockbit.datafeed.v1.PingRequest*P\n\tTradeType\x12\x1a\n\x16TRADE_TYPE_UNSPECIFIED\x10\x00\x12\x12\n\x0eTRADE_TYPE_BUY\x10\x01\x12\x13\n\x0fTRADE_TYPE_SELL\x10\x02*`\n\tBoardType\x12\x1a\n\x16\x42OARD_TYPE_UNSPECIFIED\x10\x00\x12\x11\n\rBOARD_TYPE_RG\x10\x01\x12\x11\n\rBOARD_TYPE_TN\x10\x02\x12\x11\n\rBOARD_TYPE_NG\x10\x03\x42&Z$github.com/axiom-feed/proto/datafeedb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(
+    b'\n\x0e\x64\x61tafeed.proto\x12\x14stockbit.datafeed.v1\x1a\x1fgoogle/protobuf/timestamp.proto"+\n\x06\x43hange\x12\r\n\x05value\x18\x01 \x01(\x01\x12\x12\n\npercentage\x18\x02 \x01(\x01"\xd9\x02\n\x0cRunningTrade\x12\x32\n\x0ewebsocket_time\x18\x01 \x01(\x0b\x32\x1a.google.protobuf.Timestamp\x12\r\n\x05stock\x18\x02 \x01(\t\x12\r\n\x05price\x18\x03 \x01(\x01\x12\x0e\n\x06volume\x18\x04 \x01(\x01\x12/\n\x06\x61\x63tion\x18\x05 \x01(\x0e\x32\x1f.stockbit.datafeed.v1.TradeType\x12\x11\n\tis_global\x18\x06 \x01(\x08\x12(\n\x04time\x18\x07 \x01(\x0b\x32\x1a.google.protobuf.Timestamp\x12,\n\x06\x63hange\x18\x08 \x01(\x0b\x32\x1c.stockbit.datafeed.v1.Change\x12\x14\n\x0ctrade_number\x18\t \x01(\x03\x12\x35\n\x0cmarket_board\x18\n \x01(\x0e\x32\x1f.stockbit.datafeed.v1.BoardType"G\n\x11RunningTradeBatch\x12\x32\n\x06trades\x18\x01 \x03(\x0b\x32".stockbit.datafeed.v1.RunningTrade"\x8a\x02\n\tLivePrice\x12\r\n\x05stock\x18\x01 \x01(\t\x12\r\n\x05price\x18\x02 \x01(\x01\x12\x0e\n\x06volume\x18\x03 \x01(\x01\x12\x0c\n\x04high\x18\x04 \x01(\x01\x12\x0b\n\x03low\x18\x05 \x01(\x01\x12\x12\n\nprev_close\x18\x06 \x01(\x01\x12\x11\n\tfrequency\x18\x07 \x01(\x01\x12\x0f\n\x07\x61verage\x18\n \x01(\x01\x12\x10\n\x08time_str\x18\x0b \x01(\t\x12\x0c\n\x04open\x18\x0c \x01(\x01\x12\x17\n\x0f\x63lose_indicator\x18\r \x01(\x01\x12\r\n\x05value\x18\x0e \x01(\x01\x12\x13\n\x0b\x63hange_data\x18\x0f \x01(\x0c\x12\r\n\x05\x65xtra\x18\x10 \x01(\t\x12\x10\n\x08is_index\x18\x11 \x01(\x05"\x7f\n\tOrderbook\x12\r\n\x05stock\x18\x01 \x01(\t\x12\x0c\n\x04\x62ody\x18\x02 \x01(\t\x12\x10\n\x08sequence\x18\x03 \x01(\x03\x12\r\n\x05\x64\x65pth\x18\x04 \x01(\x03\x12\x0c\n\x04time\x18\x05 \x01(\t\x12\x11\n\ttype_flag\x18\x08 \x01(\x05\x12\x13\n\x0bserver_time\x18\t \x01(\t"?\n\x0eOrderbookEntry\x12\r\n\x05price\x18\x01 \x01(\x01\x12\x0e\n\x06volume\x18\x02 \x01(\x01\x12\x0e\n\x06orders\x18\x03 \x01(\x05"\xa3\x01\n\rOrderBookBody\x12\x14\n\x0cstock_symbol\x18\x01 \x01(\t\x12&\n\x03\x62id\x18\x02 \x03(\x0b\x32\x19.stockbit.datafeed.v1.Bid\x12*\n\x05offer\x18\x03 \x03(\x0b\x32\x1b.stockbit.datafeed.v1.Offer\x12(\n\x04time\x18\x04 \x01(\x0b\x32\x1a.google.protobuf.Timestamp"!\n\x03\x42id\x12\r\n\x05price\x18\x01 \x01(\x01\x12\x0b\n\x03lot\x18\x02 \x01(\x01"#\n\x05Offer\x12\r\n\x05price\x18\x01 \x01(\x01\x12\x0b\n\x03lot\x18\x02 \x01(\x01"=\n\x0cPingResponse\x12-\n\ttimestamp\x18\x01 \x01(\x0b\x32\x1a.google.protobuf.Timestamp"\x94\x03\n\x1bWebsocketWrapMessageChannel\x12;\n\rrunning_trade\x18\x01 \x01(\x0b\x32".stockbit.datafeed.v1.RunningTradeH\x00\x12\x32\n\x04ping\x18\x02 \x01(\x0b\x32".stockbit.datafeed.v1.PingResponseH\x00\x12=\n\x0eorderbook_body\x18\x06 \x01(\x0b\x32#.stockbit.datafeed.v1.OrderBookBodyH\x00\x12\x46\n\x13running_trade_batch\x18\x08 \x01(\x0b\x32\'.stockbit.datafeed.v1.RunningTradeBatchH\x00\x12\x34\n\tliveprice\x18\t \x01(\x0b\x32\x1f.stockbit.datafeed.v1.LivePriceH\x00\x12\x34\n\torderbook\x18\n \x01(\x0b\x32\x1f.stockbit.datafeed.v1.OrderbookH\x00\x42\x11\n\x0fmessage_channel"<\n\x0bPingRequest\x12-\n\ttimestamp\x18\x01 \x01(\x0b\x32\x1a.google.protobuf.Timestamp"\x98\x01\n\x10WebsocketChannel\x12\x11\n\twatchlist\x18\x01 \x03(\t\x12\x12\n\norder_book\x18\x02 \x03(\t\x12\x15\n\rrunning_trade\x18\x03 \x03(\t\x12\x1b\n\x13running_trade_batch\x18\x05 \x03(\t\x12\x11\n\tliveprice\x18\x06 \x03(\t\x12\x16\n\x0eorderbook_body\x18\x07 \x03(\t"\x9a\x01\n\x10WebsocketRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x37\n\x07\x63hannel\x18\x02 \x01(\x0b\x32&.stockbit.datafeed.v1.WebsocketChannel\x12\x0b\n\x03key\x18\x03 \x01(\t\x12/\n\x04ping\x18\x04 \x01(\x0b\x32!.stockbit.datafeed.v1.PingRequest*P\n\tTradeType\x12\x1a\n\x16TRADE_TYPE_UNSPECIFIED\x10\x00\x12\x12\n\x0eTRADE_TYPE_BUY\x10\x01\x12\x13\n\x0fTRADE_TYPE_SELL\x10\x02*`\n\tBoardType\x12\x1a\n\x16\x42OARD_TYPE_UNSPECIFIED\x10\x00\x12\x11\n\rBOARD_TYPE_RG\x10\x01\x12\x11\n\rBOARD_TYPE_TN\x10\x02\x12\x11\n\rBOARD_TYPE_NG\x10\x03\x42&Z$github.com/axiom-feed/proto/datafeedb\x06proto3'
+)
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
-_builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'datafeed_pb2', _globals)
+_builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, "datafeed_pb2", _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
-  _globals['DESCRIPTOR']._loaded_options = None
-  _globals['DESCRIPTOR']._serialized_options = b'Z$github.com/axiom-feed/proto/datafeed'
-  _globals['_TRADETYPE']._serialized_start=2084
-  _globals['_TRADETYPE']._serialized_end=2164
-  _globals['_BOARDTYPE']._serialized_start=2166
-  _globals['_BOARDTYPE']._serialized_end=2262
-  _globals['_CHANGE']._serialized_start=73
-  _globals['_CHANGE']._serialized_end=116
-  _globals['_RUNNINGTRADE']._serialized_start=119
-  _globals['_RUNNINGTRADE']._serialized_end=464
-  _globals['_RUNNINGTRADEBATCH']._serialized_start=466
-  _globals['_RUNNINGTRADEBATCH']._serialized_end=537
-  _globals['_LIVEPRICE']._serialized_start=540
-  _globals['_LIVEPRICE']._serialized_end=806
-  _globals['_ORDERBOOK']._serialized_start=808
-  _globals['_ORDERBOOK']._serialized_end=935
-  _globals['_ORDERBOOKENTRY']._serialized_start=937
-  _globals['_ORDERBOOKENTRY']._serialized_end=1000
-  _globals['_ORDERBOOKBODY']._serialized_start=1003
-  _globals['_ORDERBOOKBODY']._serialized_end=1166
-  _globals['_BID']._serialized_start=1168
-  _globals['_BID']._serialized_end=1201
-  _globals['_OFFER']._serialized_start=1203
-  _globals['_OFFER']._serialized_end=1238
-  _globals['_PINGRESPONSE']._serialized_start=1240
-  _globals['_PINGRESPONSE']._serialized_end=1301
-  _globals['_WEBSOCKETWRAPMESSAGECHANNEL']._serialized_start=1304
-  _globals['_WEBSOCKETWRAPMESSAGECHANNEL']._serialized_end=1708
-  _globals['_PINGREQUEST']._serialized_start=1710
-  _globals['_PINGREQUEST']._serialized_end=1770
-  _globals['_WEBSOCKETCHANNEL']._serialized_start=1773
-  _globals['_WEBSOCKETCHANNEL']._serialized_end=1925
-  _globals['_WEBSOCKETREQUEST']._serialized_start=1928
-  _globals['_WEBSOCKETREQUEST']._serialized_end=2082
+    _globals["DESCRIPTOR"]._loaded_options = None
+    _globals["DESCRIPTOR"]._serialized_options = b"Z$github.com/axiom-feed/proto/datafeed"
+    _globals["_TRADETYPE"]._serialized_start = 2084
+    _globals["_TRADETYPE"]._serialized_end = 2164
+    _globals["_BOARDTYPE"]._serialized_start = 2166
+    _globals["_BOARDTYPE"]._serialized_end = 2262
+    _globals["_CHANGE"]._serialized_start = 73
+    _globals["_CHANGE"]._serialized_end = 116
+    _globals["_RUNNINGTRADE"]._serialized_start = 119
+    _globals["_RUNNINGTRADE"]._serialized_end = 464
+    _globals["_RUNNINGTRADEBATCH"]._serialized_start = 466
+    _globals["_RUNNINGTRADEBATCH"]._serialized_end = 537
+    _globals["_LIVEPRICE"]._serialized_start = 540
+    _globals["_LIVEPRICE"]._serialized_end = 806
+    _globals["_ORDERBOOK"]._serialized_start = 808
+    _globals["_ORDERBOOK"]._serialized_end = 935
+    _globals["_ORDERBOOKENTRY"]._serialized_start = 937
+    _globals["_ORDERBOOKENTRY"]._serialized_end = 1000
+    _globals["_ORDERBOOKBODY"]._serialized_start = 1003
+    _globals["_ORDERBOOKBODY"]._serialized_end = 1166
+    _globals["_BID"]._serialized_start = 1168
+    _globals["_BID"]._serialized_end = 1201
+    _globals["_OFFER"]._serialized_start = 1203
+    _globals["_OFFER"]._serialized_end = 1238
+    _globals["_PINGRESPONSE"]._serialized_start = 1240
+    _globals["_PINGRESPONSE"]._serialized_end = 1301
+    _globals["_WEBSOCKETWRAPMESSAGECHANNEL"]._serialized_start = 1304
+    _globals["_WEBSOCKETWRAPMESSAGECHANNEL"]._serialized_end = 1708
+    _globals["_PINGREQUEST"]._serialized_start = 1710
+    _globals["_PINGREQUEST"]._serialized_end = 1770
+    _globals["_WEBSOCKETCHANNEL"]._serialized_start = 1773
+    _globals["_WEBSOCKETCHANNEL"]._serialized_end = 1925
+    _globals["_WEBSOCKETREQUEST"]._serialized_start = 1928
+    _globals["_WEBSOCKETREQUEST"]._serialized_end = 2082
 # @@protoc_insertion_point(module_scope)

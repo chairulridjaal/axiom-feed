@@ -34,7 +34,11 @@ async def chart_daily(
     }
     try:
         data = await t.get_json(url, params=params, label=f"chart_daily {symbol} {timeframe}")
-        return {"symbol": symbol.upper(), "timeframe": timeframe, "data": data.get("data") if isinstance(data, dict) else data}
+        return {
+            "symbol": symbol.upper(),
+            "timeframe": timeframe,
+            "data": data.get("data") if isinstance(data, dict) else data,
+        }
     except Exception as e:
         raise HTTPException(502, f"Failed to fetch chart for {symbol}: {e}")
 
@@ -45,6 +49,9 @@ async def price_performance(symbol: str):
     url = f"https://exodus.stockbit.com/company-price-feed/price-performance/{symbol.upper()}"
     try:
         data = await t.get_json(url, label=f"performance {symbol}")
-        return {"symbol": symbol.upper(), "performance": data.get("data") if isinstance(data, dict) else data}
+        return {
+            "symbol": symbol.upper(),
+            "performance": data.get("data") if isinstance(data, dict) else data,
+        }
     except Exception as e:
         raise HTTPException(502, f"Failed to fetch performance for {symbol}: {e}")

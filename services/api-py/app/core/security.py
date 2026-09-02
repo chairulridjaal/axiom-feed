@@ -21,7 +21,7 @@ def _get_api_key() -> str:
     # Handle possible inline comments: API_KEY="" # comment
     if "#" in val and not (val.startswith('"') and val.endswith('"')):
         val = val.split("#")[0].strip()
-    val = val.strip('"\'')
+    val = val.strip("\"'")
     return val
 
 

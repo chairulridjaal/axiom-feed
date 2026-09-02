@@ -25,6 +25,7 @@ async def run_embedded_ingest(provider, hub):
 
     from app.providers.stockbit.auth import get_auth
     from app.providers.stockbit.generated import datafeed_pb2 as pb_module
+
     pb: Any = pb_module
 
     auth = get_auth()
@@ -61,7 +62,11 @@ async def run_embedded_ingest(provider, hub):
                 sub.channel.watchlist.extend(["*"])
 
                 # explicit symbols
-                seed = [s.strip().upper() for s in os.getenv("SUBSCRIBE_SYMBOLS", "BBCA,TLKM,IHSG,BBRI,BMRI").split(",") if s.strip()]
+                seed = [
+                    s.strip().upper()
+                    for s in os.getenv("SUBSCRIBE_SYMBOLS", "BBCA,TLKM,IHSG,BBRI,BMRI").split(",")
+                    if s.strip()
+                ]
                 sub.channel.liveprice.extend(seed)
                 sub.channel.order_book.extend(seed)
 
@@ -90,40 +95,79 @@ async def run_embedded_ingest(provider, hub):
                                         from app.providers.stockbit.mapping import (
                                             map_running_trade_to_domain,
                                         )
+
                                         trade = map_running_trade_to_domain(t)
                                         provider.live_feed().ingest_trade(trade)
-                                        await hub.publish({"kind": "trade", "symbol": trade.symbol, "payload": {
-                                            "stock": trade.symbol, "price": float(trade.price), "volume": trade.volume,
-                                            "side": str(trade.side.value if hasattr(trade.side, 'value') else trade.side),
-                                            "trade_number": trade.seq
-                                        }})
+                                        await hub.publish(
+                                            {
+                                                "kind": "trade",
+                                                "symbol": trade.symbol,
+                                                "payload": {
+                                                    "stock": trade.symbol,
+                                                    "price": float(trade.price),
+                                                    "volume": trade.volume,
+                                                    "side": str(
+                                                        trade.side.value
+                                                        if hasattr(trade.side, "value")
+                                                        else trade.side
+                                                    ),
+                                                    "trade_number": trade.seq,
+                                                },
+                                            }
+                                        )
                                 elif which == "running_trade":
                                     from app.providers.stockbit.mapping import (
                                         map_running_trade_to_domain,
                                     )
+
                                     trade = map_running_trade_to_domain(wrapper.running_trade)
                                     provider.live_feed().ingest_trade(trade)
-                                    await hub.publish({"kind": "trade", "symbol": trade.symbol, "payload": {
-                                        "stock": trade.symbol, "price": float(trade.price), "volume": trade.volume,
-                                        "side": str(trade.side.value if hasattr(trade.side, 'value') else trade.side),
-                                        "trade_number": trade.seq
-                                    }})
+                                    await hub.publish(
+                                        {
+                                            "kind": "trade",
+                                            "symbol": trade.symbol,
+                                            "payload": {
+                                                "stock": trade.symbol,
+                                                "price": float(trade.price),
+                                                "volume": trade.volume,
+                                                "side": str(
+                                                    trade.side.value
+                                                    if hasattr(trade.side, "value")
+                                                    else trade.side
+                                                ),
+                                                "trade_number": trade.seq,
+                                            },
+                                        }
+                                    )
                                 elif which == "liveprice":
                                     from app.providers.stockbit.mapping import (
                                         map_liveprice_to_quote,
                                     )
+
                                     q = map_liveprice_to_quote(wrapper.liveprice)
                                     provider.live_feed().ingest_quote(q)
-                                    await hub.publish({"kind": "quote", "symbol": q.symbol, "payload": {
-                                        "stock": q.symbol, "price": float(q.last), "open": float(q.open) if q.open else None,
-                                        "high": float(q.high) if q.high else None, "low": float(q.low) if q.low else None
-                                    }})
+                                    await hub.publish(
+                                        {
+                                            "kind": "quote",
+                                            "symbol": q.symbol,
+                                            "payload": {
+                                                "stock": q.symbol,
+                                                "price": float(q.last),
+                                                "open": float(q.open) if q.open else None,
+                                                "high": float(q.high) if q.high else None,
+                                                "low": float(q.low) if q.low else None,
+                                            },
+                                        }
+                                    )
                                 elif which == "orderbook_body":
                                     from app.providers.stockbit.mapping import (
                                         map_orderbook_body_to_book,
                                     )
+
                                     ob = wrapper.orderbook_body
-                                    book = map_orderbook_body_to_book(ob.stock_symbol, ob.bid, ob.offer)
+                                    book = map_orderbook_body_to_book(
+                                        ob.stock_symbol, ob.bid, ob.offer
+                                    )
                                     provider.live_feed().ingest_book(book)
                             except Exception:
                                 pass
