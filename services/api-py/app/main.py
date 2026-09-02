@@ -76,6 +76,7 @@ async def lifespan(app: FastAPI):
         # Launch embedded direct WebSocket feed
         try:
             from app.providers.stockbit.embedded_ingest import run_embedded_ingest
+
             prov = get_provider()
             consumer_task = asyncio.create_task(run_embedded_ingest(prov, hub))
             logger.info("Embedded Stockbit WSS ingest task launched")

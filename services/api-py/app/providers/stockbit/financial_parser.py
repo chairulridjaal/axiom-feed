@@ -62,10 +62,12 @@ def parse_financial_statement_html(html_report: str) -> dict[str, Any]:
         if not item_name:
             continue
         values = r[1:] if len(r) > 1 else []
-        line_items.append({
-            "name": item_name,
-            "values": values,
-        })
+        line_items.append(
+            {
+                "name": item_name,
+                "values": values,
+            }
+        )
 
     return {
         "unit": unit_label,
