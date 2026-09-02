@@ -2,14 +2,13 @@ from fastapi import APIRouter, Depends, Query
 
 from app.core.security import verify_api_key
 from app.providers.stockbit.provider import get_provider
-from app.providers.stockbit.transport import get_transport
 
 router = APIRouter(dependencies=[Depends(verify_api_key)], tags=["Market"])
 
 
 @router.get("/v1/market/movers")
 async def movers(kind: str = Query("top_gainers")):
-    t = get_transport()
+    p = get_provider()
     mapping = {
         "top_gainers": "MOVER_TYPE_TOP_GAINER",
         "top_losers": "MOVER_TYPE_TOP_LOSER",
@@ -33,7 +32,7 @@ async def movers(kind: str = Query("top_gainers")):
     )
     url = f"https://exodus.stockbit.com/order-trade/market-mover?mover_type={mover_type}&{boards}"
     try:
-        data = await t.get_json(url, label=f"movers({kind})")
+        data = await p.fetch(url, label=f"movers({kind})")
         mover_list = data.get("data", {}).get("mover_list", []) if isinstance(data, dict) else []
         res = []
         for it in mover_list:
@@ -62,23 +61,9 @@ async def movers(kind: str = Query("top_gainers")):
 
 @router.get("/v1/calendars/{type}")
 async def calendars(type: str):
-    t = get_transport()
-    mapping = {
-        "ipo": "ipo",
-        "dividend": "dividend",
-        "tenderoffer": "tenderoffer",
-        "tender": "tenderoffer",
-        "rightissue": "rightissue",
-        "rights": "rightissue",
-        "stocksplit": "stocksplit",
-        "splits": "stocksplit",
-        "economic": "economic",
-    }
-    ep = mapping.get(type.lower(), type.lower())
+    p = get_provider()
     try:
-        data = await t.get_json(
-            f"https://exodus.stockbit.com/corpaction/{ep}", label=f"calendar {type}"
-        )
+        data = await p.calendars(type)
         return {"type": type, "data": data.get("data") if isinstance(data, dict) else data}
     except Exception:
         return {"type": type, "data": None}
@@ -86,12 +71,9 @@ async def calendars(type: str):
 
 @router.get("/v1/calendars/companies/{symbol}/actions")
 async def company_actions(symbol: str, limit: int = Query(30)):
-    t = get_transport()
+    p = get_provider()
     try:
-        data = await t.get_json(
-            f"https://exodus.stockbit.com/corpaction/{symbol.upper()}?limit={limit}",
-            label=f"corpaction {symbol}",
-        )
+        data = await p.company_actions(symbol, limit=limit)
         return {
             "symbol": symbol.upper(),
             "actions": data.get("data") if isinstance(data, dict) else data,

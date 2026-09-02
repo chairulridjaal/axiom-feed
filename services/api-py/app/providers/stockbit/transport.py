@@ -156,32 +156,91 @@ class HttpxTransport:
                             await asyncio.sleep(1)
                 resp.raise_for_status()
                 buf = bytearray()
-                max_buf = 10_000_000
+                in_array = False
+                in_string = False
+                escape = False
+                brace_depth = 0
+                obj_start = -1
+                yielded_any = False
+                i = 0
+
                 async for chunk in resp.aiter_bytes():
                     buf.extend(chunk)
-                    if len(buf) > max_buf:
-                        raise RuntimeError(f"stream_json_array exceeded {max_buf} bytes for {url}")
-                if not buf:
-                    return
-                data = orjson.loads(buf)
-                buf.clear()
-                # Stockbit wraps in {"data": [...]} or {"data": {"candles": [...]}} etc
-                items = data
-                if isinstance(data, dict) and array_key in data:
-                    items = data[array_key]
-                    # some endpoints use {"data": {"candle": [...]}} double-wrap
-                    if isinstance(items, dict):
-                        # pick first list value
-                        for v in items.values():
-                            if isinstance(v, list):
-                                items = v
-                                break
-                if isinstance(items, list):
-                    for it in items:
-                        if isinstance(it, dict):
-                            yield it
-                elif isinstance(items, dict):
-                    yield items
+                    while i < len(buf):
+                        c = buf[i]
+                        if in_string:
+                            if escape:
+                                escape = False
+                            elif c == 92:
+                                escape = True
+                            elif c == 34:
+                                in_string = False
+                            i += 1
+                            continue
+
+                        if c == 34:
+                            in_string = True
+                            i += 1
+                            continue
+
+                        if not in_array:
+                            if c == 91:
+                                in_array = True
+                                del buf[: i + 1]
+                                i = 0
+                                obj_start = -1
+                                continue
+                            i += 1
+                            continue
+
+                        if c == 123:
+                            if brace_depth == 0:
+                                obj_start = i
+                            brace_depth += 1
+                        elif c == 125:
+                            brace_depth -= 1
+                            if brace_depth == 0 and obj_start != -1:
+                                raw_obj = buf[obj_start : i + 1]
+                                try:
+                                    item = orjson.loads(raw_obj)
+                                    if isinstance(item, dict):
+                                        yield item
+                                        yielded_any = True
+                                except Exception:
+                                    pass
+                                del buf[: i + 1]
+                                i = 0
+                                obj_start = -1
+                                continue
+                        elif c == 93 and brace_depth == 0:
+                            in_array = False
+                            del buf[: i + 1]
+                            i = 0
+                            obj_start = -1
+                            continue
+
+                        i += 1
+
+                if not yielded_any and buf:
+                    try:
+                        data = orjson.loads(buf)
+                        if isinstance(data, dict):
+                            items = data
+                            if array_key in data:
+                                items = data[array_key]
+                                if isinstance(items, dict):
+                                    for v in items.values():
+                                        if isinstance(v, list):
+                                            items = v
+                                            break
+                            if isinstance(items, list):
+                                for it in items:
+                                    if isinstance(it, dict):
+                                        yield it
+                            elif isinstance(items, dict):
+                                yield items
+                    except Exception:
+                        pass
 
 
 # global transport singleton (initialized from AuthManager)

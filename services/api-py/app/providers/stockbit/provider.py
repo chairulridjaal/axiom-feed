@@ -164,7 +164,6 @@ class StockbitProvider:
     async def candles(
         self, symbol: Symbol, frm: date, to: date, resolution: Resolution
     ) -> AsyncIterator[Candle]:
-        import asyncio
         from datetime import datetime
 
         symbol = symbol.upper().strip()
@@ -234,51 +233,104 @@ class StockbitProvider:
             windows.append((cur, nxt))
             cur = nxt + timedelta(days=1)
 
-        if len(windows) <= 1:
-            seen_ts = set()
-            for w_from, w_to in windows:
-                url = f"{EXODUS}/chartbit/{symbol}/price/intraday"
-                params = build_intraday_params(w_from, w_to)
-                try:
-                    async for d in self.transport.stream_json_array(url, params=params):
-                        c = map_candle_dict(d)
-                        if not c:
-                            continue
-                        key = int(c.ts.timestamp())
-                        if key in seen_ts:
-                            continue
-                        seen_ts.add(key)
-                        yield c
-                except Exception as e:
-                    logger.warning(f"candle window {w_from}->{w_to} {resolution} failed: {e}")
-            return
+        seen_ts = set()
+        for w_from, w_to in windows:
+            url = f"{EXODUS}/chartbit/{symbol}/price/intraday"
+            params = build_intraday_params(w_from, w_to)
+            try:
+                async for d in self.transport.stream_json_array(url, params=params):
+                    c = map_candle_dict(d)
+                    if not c:
+                        continue
+                    key = int(c.ts.timestamp())
+                    if key in seen_ts:
+                        continue
+                    seen_ts.add(key)
+                    yield c
+            except Exception as e:
+                logger.warning(f"candle window {w_from}->{w_to} {resolution} failed: {e}")
+        return
 
-        sem = asyncio.Semaphore(CONCURRENCY)
+    async def emitten_info(self, symbol: Symbol) -> dict[str, Any]:
+        url = f"{EXODUS}/emitten/{symbol.upper()}/info"
+        return await self.transport.get_json(url, label=f"emitten_info({symbol})")
 
-        async def fetch_window(w_from: date, w_to: date) -> list[Candle]:
-            async with sem:
-                url = f"{EXODUS}/chartbit/{symbol}/price/intraday"
-                params = build_intraday_params(w_from, w_to)
-                out: list[Candle] = []
-                try:
-                    async for d in self.transport.stream_json_array(url, params=params):
-                        c = map_candle_dict(d)
-                        if c:
-                            out.append(c)
-                except Exception as e:
-                    logger.warning(f"candle window {w_from}->{w_to} {resolution} failed: {e}")
-                return out
+    async def emitten_profile(self, symbol: Symbol) -> dict[str, Any]:
+        url = f"{EXODUS}/emitten/{symbol.upper()}/profile"
+        return await self.transport.get_json(url, label=f"emitten_profile({symbol})")
 
-        results = await asyncio.gather(*(fetch_window(a, b) for a, b in windows))
-        all_candles: list[Candle] = [c for lst in results for c in lst]
-        all_candles.sort(key=lambda c: c.ts)
-        seen: set[int] = set()
-        for c in all_candles:
-            key = int(c.ts.timestamp())
-            if key in seen:
-                continue
-            seen.add(key)
-            yield c
+    async def emitten_subsidiaries(self, symbol: Symbol) -> dict[str, Any]:
+        url = f"{EXODUS}/emitten-metadata/subsidiary/{symbol.upper()}"
+        return await self.transport.get_json(url, label=f"subsidiary({symbol})")
+
+    async def trade_book(
+        self,
+        symbol: Symbol,
+        interval: str | None = None,
+        group_by: str = "GROUP_BY_PRICE",
+    ) -> dict[str, Any]:
+        url = f"{EXODUS}/order-trade/trade-book"
+        params: dict[str, Any] = {"symbol": symbol.upper(), "group_by": group_by}
+        if interval is not None:
+            params["interval"] = interval
+        return await self.transport.get_json(url, params=params, label=f"trade_book({symbol})")
+
+    async def chart_daily(
+        self,
+        symbol: Symbol,
+        timeframe: str = "1w",
+        is_include_previous_historical: bool = True,
+    ) -> dict[str, Any]:
+        url = f"{EXODUS}/charts/{symbol.upper()}/daily"
+        params = {
+            "timeframe": timeframe,
+            "is_include_previous_historical": "true" if is_include_previous_historical else "false",
+        }
+        return await self.transport.get_json(
+            url, params=params, label=f"chart_daily({symbol}/{timeframe})"
+        )
+
+    async def price_performance(self, symbol: Symbol) -> dict[str, Any]:
+        url = f"{EXODUS}/company-price-feed/price-performance/{symbol.upper()}"
+        return await self.transport.get_json(url, label=f"performance({symbol})")
+
+    async def financial_report(
+        self,
+        symbol: Symbol,
+        data_type: int = 1,
+        report_type: int = 1,
+        statement_type: int = 1,
+    ) -> dict[str, Any]:
+        url = f"{EXODUS}/findata-view/company/financial"
+        params = {
+            "symbol": symbol.upper(),
+            "data_type": data_type,
+            "report_type": report_type,
+            "statement_type": statement_type,
+        }
+        return await self.transport.get_json(url, params=params, label=f"financials({symbol})")
+
+    async def calendars(self, calendar_type: str) -> dict[str, Any]:
+        mapping = {
+            "ipo": "ipo",
+            "dividend": "dividend",
+            "tenderoffer": "tenderoffer",
+            "tender": "tenderoffer",
+            "rightissue": "rightissue",
+            "rights": "rightissue",
+            "stocksplit": "stocksplit",
+            "splits": "stocksplit",
+            "economic": "economic",
+        }
+        ep = mapping.get(calendar_type.lower(), calendar_type.lower())
+        url = f"{EXODUS}/corpaction/{ep}"
+        return await self.transport.get_json(url, label=f"calendar({calendar_type})")
+
+    async def company_actions(self, symbol: Symbol, limit: int = 30) -> dict[str, Any]:
+        url = f"{EXODUS}/corpaction/{symbol.upper()}"
+        return await self.transport.get_json(
+            url, params={"limit": limit}, label=f"corpaction({symbol})"
+        )
 
     async def key_stats(self, symbol: Symbol) -> KeyStats | None:
         url = f"{EXODUS}/keystats/ratio/v1/{symbol.upper()}"

@@ -9,6 +9,12 @@ import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+load_dotenv()
+load_dotenv(Path(__file__).resolve().parents[3] / ".env")
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware

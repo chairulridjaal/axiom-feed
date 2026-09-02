@@ -3,7 +3,7 @@ import datetime as dt
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.core.security import verify_api_key
-from app.providers.stockbit.transport import get_transport
+from app.providers.stockbit.provider import get_provider
 
 router = APIRouter(dependencies=[Depends(verify_api_key)], tags=["Brokers"])
 
@@ -18,20 +18,11 @@ async def broker_summary(
     investor_type: str = Query("INVESTOR_TYPE_ALL"),
     limit: int = Query(100),
 ):
-    t = get_transport()
+    p = get_provider()
     frm = frm or dt.datetime.now().strftime("%Y-%m-%d")
     to = to or frm
-    url = f"https://exodus.stockbit.com/marketdetectors/{symbol.upper()}"
-    params = {
-        "from": frm,
-        "to": to,
-        "transaction_type": transaction_type,
-        "market_board": market_board,
-        "investor_type": investor_type,
-        "limit": limit,
-    }
     try:
-        data = await t.get_json(url, params=params, label=f"broker_summary({symbol})")
+        data = await p.broker_summary(symbol, frm=frm, to=to)
         return {"symbol": symbol.upper(), "data": data}
     except Exception as e:
         raise HTTPException(502, f"Broker summary failed: {e}")
@@ -45,19 +36,11 @@ async def brokers_top(
     order: str = Query("ORDER_BY_DESC"),
     market_type: str = Query("MARKET_TYPE_ALL"),
 ):
-    t = get_transport()
+    p = get_provider()
     frm = frm or dt.datetime.now().strftime("%Y-%m-%d")
     to = to or frm
-    url = "https://exodus.stockbit.com/order-trade/broker/top"
-    params = {
-        "from": frm,
-        "to": to,
-        "sort": sort,
-        "order": order,
-        "market_type": market_type,
-    }
     try:
-        data = await t.get_json(url, params=params, label="broker_top")
+        data = await p.brokers_top(frm, to)
         return {"brokers": data}
     except Exception as e:
         raise HTTPException(502, f"Broker top failed: {e}")
@@ -74,20 +57,11 @@ async def brokers_top_stocks(
     value_type: str = Query("VALUE_TYPE_NET"),
     page: int = Query(1),
 ):
-    t = get_transport()
+    p = get_provider()
     s = start or frm or dt.datetime.now().strftime("%Y-%m-%d")
     e = end or to or s
-    url = "https://exodus.stockbit.com/order-trade/top-stock"
-    params = {
-        "start": s,
-        "end": e,
-        "investor_type": investor_type,
-        "market_type": market_type,
-        "value_type": value_type,
-        "page": page,
-    }
     try:
-        data = await t.get_json(url, params=params, label="broker_top_stock")
+        data = await p.brokers_top_stocks(s, e)
         return {"stocks": data}
     except Exception as e:
         raise HTTPException(502, f"Broker top-stocks failed: {e}")
@@ -104,21 +78,11 @@ async def broker_activity(
     market_board: str = Query("MARKET_BOARD_REGULER"),
     investor_type: str = Query("INVESTOR_TYPE_ALL"),
 ):
-    t = get_transport()
+    p = get_provider()
     frm = frm or dt.datetime.now().strftime("%Y-%m-%d")
     to = to or frm
-    url = f"https://exodus.stockbit.com/findata-view/marketdetectors/activity/{code.upper()}/detail"
-    params = {
-        "from": frm,
-        "to": to,
-        "limit": limit,
-        "page": page,
-        "transaction_type": transaction_type,
-        "market_board": market_board,
-        "investor_type": investor_type,
-    }
     try:
-        data = await t.get_json(url, params=params, label=f"broker_activity({code})")
+        data = await p.broker_activity(code, frm, to)
         return {"broker": code.upper(), "activity": data}
     except Exception as e:
         raise HTTPException(502, f"Broker activity failed: {e}")

@@ -4,21 +4,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.core.security import verify_api_key
 from app.providers.stockbit.provider import get_provider
-from app.providers.stockbit.transport import get_transport
 
-EXODUS = "https://exodus.stockbit.com"
 router = APIRouter(dependencies=[Depends(verify_api_key)], tags=["Books"])
 
 
 @router.get("/v1/books/snapshot/{symbol}")
 async def book_snapshot(symbol: str):
-    t = get_transport()
+    prov = get_provider()
     try:
-        data = await t.get_json(
-            f"{EXODUS}/order-trade/trade-book",
-            params={"symbol": symbol.upper(), "group_by": "GROUP_BY_PRICE"},
-            label=f"book snapshot {symbol}",
-        )
+        data = await prov.trade_book(symbol, group_by="GROUP_BY_PRICE")
     except Exception as e:
         raise HTTPException(502, f"upstream failed: {e}")
     return {"symbol": symbol.upper(), "snapshot": data}
@@ -34,14 +28,8 @@ async def books(symbols: str = Query("")):
         for sym in wanted:
             b = snap.get(sym)
             if not b:
-                # fallback to REST tradebook
-                t = get_transport()
                 try:
-                    data = await t.get_json(
-                        f"{EXODUS}/order-trade/trade-book",
-                        params={"symbol": sym, "group_by": "GROUP_BY_PRICE"},
-                        label=f"book {sym}",
-                    )
+                    data = await prov.trade_book(sym, group_by="GROUP_BY_PRICE")
                     book_list = (
                         data.get("data", {}).get("book", []) if isinstance(data, dict) else []
                     )
@@ -64,14 +52,8 @@ async def book(symbol: str):
     prov = get_provider()
     b = prov.live_feed().snapshot_books().get(sym)
     if not b:
-        # fallback to REST tradebook so caller gets real orderbook even without ingest-rs
-        t = get_transport()
         try:
-            data = await t.get_json(
-                f"{EXODUS}/order-trade/trade-book",
-                params={"symbol": sym, "group_by": "GROUP_BY_PRICE"},
-                label=f"book {sym}",
-            )
+            data = await prov.trade_book(sym, group_by="GROUP_BY_PRICE")
             if data and isinstance(data, dict) and "data" in data:
                 raw_book = data["data"].get("book", [])
                 bids = []

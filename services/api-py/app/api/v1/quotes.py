@@ -4,7 +4,6 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from app.core.security import verify_api_key
 from app.providers.stockbit.provider import get_provider
-from app.providers.stockbit.transport import get_transport
 
 router = APIRouter(dependencies=[Depends(verify_api_key)], tags=["Quotes"])
 
@@ -25,12 +24,8 @@ async def quotes(symbols: str = Query("", description="comma-separated")):
         for sym in wanted:
             q = snap.get(sym)
             if not q:
-                # fallback to REST emitten info for real price
-                t = get_transport()
                 try:
-                    data = await t.get_json(
-                        f"https://exodus.stockbit.com/emitten/{sym}/info", label=f"quote {sym}"
-                    )
+                    data = await prov.emitten_info(sym)
                     if data and isinstance(data, dict) and "data" in data:
                         d = data["data"]
                         price = (
@@ -54,12 +49,8 @@ async def quote(symbol: str):
     prov = get_provider()
     q = prov.live_feed().snapshot_quotes().get(sym)
     if not q:
-        # fallback to REST emitten info so caller gets real live price even without ingest-rs
-        t = get_transport()
         try:
-            data = await t.get_json(
-                f"https://exodus.stockbit.com/emitten/{sym}/info", label=f"quote {sym}"
-            )
+            data = await prov.emitten_info(sym)
             if data and isinstance(data, dict) and "data" in data:
                 d = data["data"]
                 price = d.get("price") or d.get("last_price") or d.get("previous_price") or 0

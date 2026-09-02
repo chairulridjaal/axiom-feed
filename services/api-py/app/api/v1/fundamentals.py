@@ -3,7 +3,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from app.core.security import verify_api_key
 from app.providers.stockbit.financial_parser import parse_financial_statement_html
 from app.providers.stockbit.provider import get_provider
-from app.providers.stockbit.transport import get_transport
 
 router = APIRouter(dependencies=[Depends(verify_api_key)], tags=["Fundamentals"])
 
@@ -27,16 +26,14 @@ async def company_financials(
         description="1: Quarterly, 2: Annually, 3: TTM, 4: Interim YTD, 5: Q1, 6: Q2, 7: Q3, 8: Q4, 9: QoQ Growth, 10: Quarter YoY Growth, 11: YTD YoY Growth, 12: Annual YoY Growth, 13: 3 Year CAGR",
     ),
 ):
-    t = get_transport()
-    url = "https://exodus.stockbit.com/findata-view/company/financial"
-    params = {
-        "symbol": symbol.upper(),
-        "data_type": data_type,
-        "report_type": report_type,
-        "statement_type": statement_type,
-    }
+    p = get_provider()
     try:
-        data = await t.get_json(url, params=params, label=f"financials {symbol}")
+        data = await p.financial_report(
+            symbol,
+            data_type=data_type,
+            report_type=report_type,
+            statement_type=statement_type,
+        )
         raw_data = data.get("data") if isinstance(data, dict) else data
         html_report = raw_data.get("html_report", "") if isinstance(raw_data, dict) else ""
         structured = parse_financial_statement_html(html_report)
@@ -58,12 +55,9 @@ async def company_financials(
 
 @router.get("/v1/companies/{symbol}")
 async def company(symbol: str):
-    t = get_transport()
+    p = get_provider()
     try:
-        data = await t.get_json(
-            f"https://exodus.stockbit.com/emitten/{symbol.upper()}/info",
-            label=f"company {symbol}",
-        )
+        data = await p.emitten_info(symbol)
         return {
             "symbol": symbol.upper(),
             "data": data.get("data") if isinstance(data, dict) else data,
@@ -74,12 +68,9 @@ async def company(symbol: str):
 
 @router.get("/v1/companies/{symbol}/profile")
 async def company_profile(symbol: str):
-    t = get_transport()
+    p = get_provider()
     try:
-        data = await t.get_json(
-            f"https://exodus.stockbit.com/emitten/{symbol.upper()}/profile",
-            label=f"company profile {symbol}",
-        )
+        data = await p.emitten_profile(symbol)
         return {
             "symbol": symbol.upper(),
             "profile": data.get("data") if isinstance(data, dict) else data,
@@ -90,12 +81,9 @@ async def company_profile(symbol: str):
 
 @router.get("/v1/companies/{symbol}/subsidiaries")
 async def company_subsidiaries(symbol: str):
-    t = get_transport()
+    p = get_provider()
     try:
-        data = await t.get_json(
-            f"https://exodus.stockbit.com/emitten-metadata/subsidiary/{symbol.upper()}",
-            label=f"subsidiary {symbol}",
-        )
+        data = await p.emitten_subsidiaries(symbol)
         return {
             "symbol": symbol.upper(),
             "subsidiaries": data.get("data", {}).get("subsidiaries", [])
