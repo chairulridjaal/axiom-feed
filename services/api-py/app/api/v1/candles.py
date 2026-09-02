@@ -56,51 +56,38 @@ def init_candles(cache: BoundedCache, flight: Singleflight | None = None):
         MAX_CACHE_CANDLES = 20000
         MAX_CACHE_BYTES = 5_000_000
 
-        async def _fetch_upstream() -> list[dict[str, Any]]:
-            recheck = cache.get(cache_key)
-            if recheck is not None:
-                return recheck  # type: ignore[return-value]
-
+        async def _stream_direct():
             collected: list[dict[str, Any]] = []
-            async for c in provider.candles(symbol, frm, to, resolution):  # type: ignore[arg-type]
-                d = {
-                    "ts": c.ts.isoformat(),
-                    "open": str(c.open),
-                    "high": str(c.high),
-                    "low": str(c.low),
-                    "close": str(c.close),
-                    "volume": c.volume,
-                    "value": str(c.value),
-                    "freq": c.freq,
-                }
-                collected.append(d)
+            try:
+                async for c in provider.candles(symbol, frm, to, resolution):  # type: ignore[arg-type]
+                    d = {
+                        "ts": c.ts.isoformat(),
+                        "open": str(c.open),
+                        "high": str(c.high),
+                        "low": str(c.low),
+                        "close": str(c.close),
+                        "volume": c.volume,
+                        "value": str(c.value),
+                        "freq": c.freq,
+                    }
+                    if len(collected) < MAX_CACHE_CANDLES:
+                        collected.append(d)
+                    yield orjson.dumps(d) + b"\n"
 
-            if collected and len(collected) <= MAX_CACHE_CANDLES:
-                try:
-                    size = len(orjson.dumps(collected))
-                    if size <= MAX_CACHE_BYTES:
-                        cache.set(cache_key, collected, size=size)
-                except Exception:
-                    pass
-            return collected
-
-        try:
-            items = await sf.do(cache_key, _fetch_upstream)
-        except Exception as e:
-            err_msg = str(e)
-            logger.error(f"candles stream failed {symbol} {frm}->{to} {resolution}: {err_msg}")
-
-            async def _error_gen():
+                if collected and len(collected) <= MAX_CACHE_CANDLES:
+                    try:
+                        raw_bytes = orjson.dumps(collected)
+                        if len(raw_bytes) <= MAX_CACHE_BYTES:
+                            cache.set(cache_key, collected, size=len(raw_bytes))
+                    except Exception:
+                        pass
+            except Exception as e:
+                err_msg = str(e)
+                logger.error(f"candles stream failed {symbol} {frm}->{to} {resolution}: {err_msg}")
                 yield orjson.dumps({"error": err_msg}) + b"\n"
 
-            return StreamingResponse(_error_gen(), media_type="application/x-ndjson")
-
-        async def _stream_items():
-            for it in items:
-                yield orjson.dumps(it) + b"\n"
-
         return StreamingResponse(
-            _stream_items(), media_type="application/x-ndjson", headers={"X-Cache": "MISS"}
+            _stream_direct(), media_type="application/x-ndjson", headers={"X-Cache": "MISS"}
         )
 
     return router

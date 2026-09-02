@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections import deque
 from collections.abc import AsyncIterator
 from datetime import date, timedelta
 from decimal import Decimal
@@ -53,8 +54,8 @@ class LiveFeedState:
         self.max_symbols = max_symbols
         self.quotes: dict[Symbol, Quote] = {}
         self.books: dict[Symbol, Book] = {}
-        self.trades: dict[Symbol, list] = {}
-        self._global_trades: list[Trade] = []
+        self.trades: dict[Symbol, deque[Trade]] = {}
+        self._global_trades: deque[Trade] = deque(maxlen=1000)
 
     def subscribe(self, symbols: set[Symbol], kinds: set[str] | None = None):
         kinds = kinds or {"quotes", "books", "trades"}
@@ -69,16 +70,19 @@ class LiveFeedState:
 
     def snapshot_trades(self, symbol: Symbol | None = None, limit: int = 100):
         if symbol is not None:
-            return list(self.trades.get(symbol.upper(), []))[:limit]
-        return list(self._global_trades[:limit])
+            trades_dq = self.trades.get(symbol.upper())
+            if not trades_dq:
+                return []
+            return list(trades_dq)[:limit]
+        return list(self._global_trades)[:limit]
 
     def ingest_trade(self, trade: Trade):
-        self.trades.setdefault(trade.symbol, []).insert(0, trade)
-        self._global_trades.insert(0, trade)
-        if len(self.trades[trade.symbol]) > 1000:
-            self.trades[trade.symbol] = self.trades[trade.symbol][:1000]
-        if len(self._global_trades) > 1000:
-            self._global_trades = self._global_trades[:1000]
+        sym_dq = self.trades.get(trade.symbol)
+        if sym_dq is None:
+            sym_dq = deque(maxlen=1000)
+            self.trades[trade.symbol] = sym_dq
+        sym_dq.appendleft(trade)
+        self._global_trades.appendleft(trade)
 
     def ingest_quote(self, quote: Quote):
         sym = quote.symbol.upper()

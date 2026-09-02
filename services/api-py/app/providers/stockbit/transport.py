@@ -35,20 +35,18 @@ class RateLimiter:
         self.rps = rps
         self._tokens = rps
         self._updated = time.monotonic()
-        self._lock = asyncio.Lock()
 
     async def acquire(self) -> None:
-        wait: float = 0.0
-        async with self._lock:
-            now = time.monotonic()
-            elapsed = now - self._updated
-            self._updated = now
-            self._tokens = min(self.rps, self._tokens + elapsed * self.rps)
-            if self._tokens < 1:
-                wait = (1 - self._tokens) / self.rps
-                self._tokens = 0
-            else:
-                self._tokens -= 1
+        now = time.monotonic()
+        elapsed = now - self._updated
+        self._updated = now
+        self._tokens = min(self.rps, self._tokens + elapsed * self.rps)
+        if self._tokens < 1:
+            wait = (1 - self._tokens) / self.rps
+            self._tokens = 0
+        else:
+            wait = 0.0
+            self._tokens -= 1
         if wait > 0:
             await asyncio.sleep(wait)
 
@@ -73,9 +71,20 @@ class HttpxTransport:
     ):
         self.bearer = bearer_token or ""
         self.cookies = cookies
+        self.concurrency = concurrency
         self.limiter = RateLimiter(rps=rps)
-        self.sem = asyncio.Semaphore(concurrency)
+        self._sem: asyncio.Semaphore | None = None
         self._client: httpx.AsyncClient | None = None
+
+    def semaphore(self) -> asyncio.Semaphore:
+        try:
+            loop = asyncio.get_running_loop()
+            if self._sem is None or getattr(self._sem, "_loop", None) != loop:
+                self._sem = asyncio.Semaphore(self.concurrency)
+        except Exception:
+            if self._sem is None:
+                self._sem = asyncio.Semaphore(self.concurrency)
+        return self._sem
 
     def _headers(self) -> dict[str, str]:
         h = {
@@ -90,6 +99,17 @@ class HttpxTransport:
         return h
 
     def client(self) -> httpx.AsyncClient:
+        if self._client is not None:
+            try:
+                loop = asyncio.get_running_loop()
+                transport = getattr(self._client, "_transport", None)
+                transport_loop = getattr(transport, "_loop", None)
+                if self._client.is_closed or (
+                    transport_loop is not None and transport_loop != loop
+                ):
+                    self._client = None
+            except Exception:
+                pass
         if self._client is None:
             limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
             self._client = httpx.AsyncClient(
@@ -125,7 +145,7 @@ class HttpxTransport:
         label: str = "GET",
     ) -> Any:
         await self.limiter.acquire()
-        async with self.sem:
+        async with self.semaphore():
             resp = await self.client().get(url, params=params)
             if resp.status_code == 429:
                 ra = resp.headers.get("Retry-After")
@@ -135,7 +155,6 @@ class HttpxTransport:
                     except Exception:
                         await asyncio.sleep(1)
             resp.raise_for_status()
-            # incremental orjson parse (avoid double-copy)
             return orjson.loads(resp.content)
 
     async def stream_json_array(
@@ -145,7 +164,7 @@ class HttpxTransport:
         array_key: str = "data",
     ) -> AsyncIterator[dict[str, Any]]:
         await self.limiter.acquire()
-        async with self.sem:
+        async with self.semaphore():
             async with self.client().stream("GET", url, params=params) as resp:
                 if resp.status_code == 429:
                     ra = resp.headers.get("Retry-After")
@@ -163,6 +182,7 @@ class HttpxTransport:
                 obj_start = -1
                 yielded_any = False
                 i = 0
+                consumed_index = 0
 
                 async for chunk in resp.aiter_bytes():
                     buf.extend(chunk)
@@ -188,6 +208,7 @@ class HttpxTransport:
                                 in_array = True
                                 del buf[: i + 1]
                                 i = 0
+                                consumed_index = 0
                                 obj_start = -1
                                 continue
                             i += 1
@@ -208,18 +229,24 @@ class HttpxTransport:
                                         yielded_any = True
                                 except Exception:
                                     pass
-                                del buf[: i + 1]
-                                i = 0
+                                consumed_index = i + 1
                                 obj_start = -1
-                                continue
+                                if consumed_index > 65536:
+                                    del buf[:consumed_index]
+                                    i -= consumed_index
+                                    consumed_index = 0
                         elif c == 93 and brace_depth == 0:
                             in_array = False
                             del buf[: i + 1]
                             i = 0
+                            consumed_index = 0
                             obj_start = -1
                             continue
 
                         i += 1
+
+                if consumed_index > 0 and consumed_index < len(buf):
+                    del buf[:consumed_index]
 
                 if not yielded_any and buf:
                     try:

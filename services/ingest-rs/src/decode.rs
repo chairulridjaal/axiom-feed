@@ -9,21 +9,25 @@ use std::io::Read;
 include!(concat!(env!("OUT_DIR"), "/stockbit.datafeed.v1.rs"));
 
 pub fn decompress(bytes: &[u8]) -> Vec<u8> {
-    if let Ok(v) = try_zlib(bytes) {
+    if bytes.is_empty() {
+        return Vec::new();
+    }
+    if let Ok(v) = try_deflate(bytes) {
         if !v.is_empty() && v.len() > 8 {
             return v;
         }
     }
-    for suffix in [false, true] {
-        let data: Vec<u8> = if suffix {
-            [bytes, b"\x00\x00\xff\xff" as &[u8]].concat()
-        } else {
-            bytes.to_vec()
-        };
-        if let Ok(v) = try_deflate(&data) {
-            if !v.is_empty() && v.len() > 8 {
-                return v;
-            }
+    let mut with_suffix = Vec::with_capacity(bytes.len() + 4);
+    with_suffix.extend_from_slice(bytes);
+    with_suffix.extend_from_slice(b"\x00\x00\xff\xff");
+    if let Ok(v) = try_deflate(&with_suffix) {
+        if !v.is_empty() && v.len() > 8 {
+            return v;
+        }
+    }
+    if let Ok(v) = try_zlib(bytes) {
+        if !v.is_empty() && v.len() > 8 {
+            return v;
         }
     }
     bytes.to_vec()
@@ -31,14 +35,14 @@ pub fn decompress(bytes: &[u8]) -> Vec<u8> {
 
 fn try_zlib(d: &[u8]) -> Result<Vec<u8>, std::io::Error> {
     let mut dec = ZlibDecoder::new(d);
-    let mut out = Vec::new();
+    let mut out = Vec::with_capacity(d.len() * 3);
     dec.read_to_end(&mut out)?;
     Ok(out)
 }
 
 fn try_deflate(d: &[u8]) -> Result<Vec<u8>, std::io::Error> {
     let mut dec = DeflateDecoder::new(d);
-    let mut out = Vec::new();
+    let mut out = Vec::with_capacity(d.len() * 3);
     dec.read_to_end(&mut out)?;
     Ok(out)
 }

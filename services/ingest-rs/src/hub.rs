@@ -40,30 +40,66 @@ pub async fn redis_publisher_task(hub: Arc<Hub>, redis_url: String) {
             return Box::pin(redis_publisher_task(hub, redis_url)).await;
         }
     };
+    let mut batch = Vec::with_capacity(64);
     loop {
         match rx.recv().await {
             Ok(msg) => {
-                let res: Result<String, _> = redis::cmd("XADD")
-                    .arg("axiom.events")
-                    .arg("MAXLEN")
-                    .arg("~")
-                    .arg("1000")
-                    .arg("*")
-                    .arg("payload")
-                    .arg(&msg)
-                    .query_async(&mut con)
-                    .await;
-                if let Err(e) = res {
-                    warn!("XADD failed: {} — reconnecting redis", e);
-                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                    match client.get_multiplexed_async_connection().await {
-                        Ok(c) => con = c,
-                        Err(e2) => {
-                            warn!("redis reconnect failed: {}", e2);
-                            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                batch.push(msg);
+                while batch.len() < 64 {
+                    match rx.try_recv() {
+                        Ok(next_msg) => batch.push(next_msg),
+                        Err(_) => break,
+                    }
+                }
+
+                if batch.len() == 1 {
+                    let res: Result<String, _> = redis::cmd("XADD")
+                        .arg("axiom.events")
+                        .arg("MAXLEN")
+                        .arg("~")
+                        .arg("1000")
+                        .arg("*")
+                        .arg("payload")
+                        .arg(&batch[0])
+                        .query_async(&mut con)
+                        .await;
+                    if let Err(e) = res {
+                        warn!("XADD failed: {} — reconnecting redis", e);
+                        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                        match client.get_multiplexed_async_connection().await {
+                            Ok(c) => con = c,
+                            Err(e2) => {
+                                warn!("redis reconnect failed: {}", e2);
+                                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                            }
+                        }
+                    }
+                } else {
+                    let mut pipe = redis::pipe();
+                    for item in &batch {
+                        pipe.cmd("XADD")
+                            .arg("axiom.events")
+                            .arg("MAXLEN")
+                            .arg("~")
+                            .arg("1000")
+                            .arg("*")
+                            .arg("payload")
+                            .arg(item);
+                    }
+                    let res: Result<(), _> = pipe.query_async(&mut con).await;
+                    if let Err(e) = res {
+                        warn!("Pipeline XADD failed: {} — reconnecting redis", e);
+                        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                        match client.get_multiplexed_async_connection().await {
+                            Ok(c) => con = c,
+                            Err(e2) => {
+                                warn!("redis reconnect failed: {}", e2);
+                                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                            }
                         }
                     }
                 }
+                batch.clear();
             }
             Err(broadcast::error::RecvError::Lagged(n)) => {
                 warn!("hub lagged {} messages — drop-oldest active", n);

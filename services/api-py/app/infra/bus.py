@@ -6,9 +6,10 @@ Spec: Queue(100) drop-oldest, Hub 500 clients → 429, messages_dropped counter.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
+
+import orjson
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,7 @@ class Hub:
         self.max_clients = int(max_clients or os.getenv("LIVE_MAX_CLIENTS", "500"))
         self.queue_size = int(queue_size or os.getenv("LIVE_QUEUE_PER_CLIENT", "100"))
         self._clients: dict[str, asyncio.Queue] = {}
+        self._client_list: list[asyncio.Queue] = []
         self.messages_dropped = 0
         self.published = 0
 
@@ -32,18 +34,20 @@ class Hub:
             raise RuntimeError("too many clients")
         q: asyncio.Queue = asyncio.Queue(maxsize=self.queue_size)
         self._clients[client_id] = q
+        self._client_list = list(self._clients.values())
         logger.info(f"Hub register {client_id} ({len(self._clients)}/{self.max_clients})")
         return q
 
     async def unregister(self, client_id: str):
         if self._clients.pop(client_id, None) is not None:
+            self._client_list = list(self._clients.values())
             logger.info(f"Hub unregister {client_id} ({len(self._clients)} remaining)")
 
     async def publish(self, event: dict):
         self.published += 1
-        if not self._clients:
+        clients = self._client_list
+        if not clients:
             return
-        clients = list(self._clients.values())
         for q in clients:
             try:
                 q.put_nowait(event)
@@ -129,11 +133,12 @@ async def redis_consumer_task(hub: Hub, redis_url: str):
                             raw = next(iter(fields.values()), None)
                         if not raw:
                             continue
-                        # payload is JSON string from ingest-rs
                         try:
-                            if isinstance(raw, bytes):
-                                raw = raw.decode()
-                            evt = json.loads(raw) if isinstance(raw, str) else raw
+                            evt = (
+                                orjson.loads(raw)
+                                if isinstance(raw, (str, bytes, bytearray))
+                                else raw
+                            )
                         except Exception:
                             evt = {"raw": raw}
                         if isinstance(evt, dict):
