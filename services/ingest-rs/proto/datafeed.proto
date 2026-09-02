@@ -1,0 +1,155 @@
+syntax = "proto3";
+
+package stockbit.datafeed.v1;
+
+option go_package = "github.com/beni/stockbit-analysis/proto/datafeed";
+
+import "google/protobuf/timestamp.proto";
+
+// Enums
+enum TradeType {
+  TRADE_TYPE_UNSPECIFIED = 0;
+  TRADE_TYPE_BUY = 1;
+  TRADE_TYPE_SELL = 2;
+}
+
+enum BoardType {
+  BOARD_TYPE_UNSPECIFIED = 0;
+  BOARD_TYPE_RG = 1; // Regular
+  BOARD_TYPE_TN = 2; // Cash
+  BOARD_TYPE_NG = 3; // Negotiated
+}
+
+// Supporting Messages
+message Change {
+  double value = 1;
+  double percentage = 2;
+}
+
+message RunningTrade {
+  google.protobuf.Timestamp websocket_time = 1;
+  string stock = 2;
+  double price = 3;
+  double volume = 4;
+  TradeType action = 5;
+  bool is_global = 6;
+  google.protobuf.Timestamp time = 7;
+  Change change = 8;
+  int64 trade_number = 9;
+  BoardType market_board = 10;
+}
+
+message RunningTradeBatch {
+  repeated RunningTrade trades = 1;
+}
+
+// LivePrice — real-time price snapshot per symbol.
+// The server sends a much richer message than originally assumed.
+// Wire-format analysis (2026-02-09) shows these fields:
+//   f1  string  stock symbol ("BBRI", "IHSG")
+//   f2  double  last price
+//   f3  double  volume (shares traded)
+//   f4  double  high price
+//   f5  double  low price
+//   f6  double  previous close
+//   f7  double  frequency (number of trades)
+//   f10 double  average price (not always present — IHSG omits it)
+//   f11 string  ISO-8601 timestamp
+//   f12 double  open price
+//   f13 double  another price field (possibly adjusted/weighted)
+//   f14 double  value (total Rp traded)
+//   f15 bytes   sub-message (change data — further decode needed)
+//   f16 string  (empty in samples)
+//   f17 int32   flag (1 for indices like IHSG)
+message LivePrice {
+  string stock = 1;
+  double price = 2;           // Last traded price
+  double volume = 3;          // Total volume (shares)
+  double high = 4;            // Day high
+  double low = 5;             // Day low
+  double prev_close = 6;      // Previous close
+  double frequency = 7;       // Number of trades today
+  // field 8, 9 not observed
+  double average = 10;        // Average/VWAP price
+  string time_str = 11;       // ISO-8601 timestamp as string
+  double open = 12;           // Day open price
+  double close_indicator = 13; // Another price field
+  double value = 14;          // Total value traded (Rp)
+  bytes change_data = 15;     // Sub-message with change info
+  string extra = 16;          // Observed as empty string
+  int32 is_index = 17;        // 1 for index (IHSG), 0 for stocks
+}
+
+message Orderbook {
+  string stock = 1;
+  string body = 2;           // Pipe-delimited orderbook: "#O|BBCA|BID|7500;5145;16665500|..."
+  int64 sequence = 3;        // Sequence/trade count
+  int64 depth = 4;           // Depth or version count
+  string time = 5;           // ISO-8601 timestamp (e.g., "2026-02-09T14:49:51.3663+07:00")
+  // fields 6,7 not observed
+  int32 type_flag = 8;       // Type flag (1 = observed)
+  string server_time = 9;    // Server-side ISO-8601 timestamp
+}
+
+// OrderbookEntry is used by OrderBookBody (pure protobuf orderbook), not legacy Orderbook
+message OrderbookEntry {
+  double price = 1;
+  double volume = 2;
+  int32 orders = 3;
+}
+
+// Pure protobuf orderbook (preferred)
+message OrderBookBody {
+  string stock_symbol = 1;
+  repeated Bid bid = 2;
+  repeated Offer offer = 3;
+  google.protobuf.Timestamp time = 4;
+}
+
+message Bid {
+  double price = 1;
+  double lot = 2;
+}
+
+message Offer {
+  double price = 1;
+  double lot = 2;
+}
+
+message PingResponse {
+  google.protobuf.Timestamp timestamp = 1;
+}
+
+// Response Wrapper
+message WebsocketWrapMessageChannel {
+  oneof message_channel {
+    RunningTrade running_trade = 1;
+    PingResponse ping = 2;
+    OrderBookBody orderbook_body = 6;  // Pure protobuf orderbook
+    RunningTradeBatch running_trade_batch = 8;
+    LivePrice liveprice = 9;
+    Orderbook orderbook = 10;  // Hybrid orderbook (text body)
+  }
+}
+
+// Request Messages
+message PingRequest {
+  google.protobuf.Timestamp timestamp = 1;
+}
+
+message WebsocketChannel {
+  repeated string watchlist = 1;
+  repeated string order_book = 2;
+  repeated string running_trade = 3;
+  // Note: tag 4 is likely reserved/unused
+  repeated string running_trade_batch = 5;
+  repeated string liveprice = 6;
+  repeated string orderbook_body = 7;  // Subscribe to pure protobuf orderbook
+}
+
+message WebsocketRequest {
+  string user_id = 1;
+  WebsocketChannel channel = 2;
+  string key = 3;
+  PingRequest ping = 4;
+}

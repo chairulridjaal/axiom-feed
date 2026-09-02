@@ -1,0 +1,167 @@
+# axiom-feed — Sackbit Market Data (Python + Rust)
+
+Standalone, high-throughput, bounded market-data service for the Konoha Stock Exchange (KSE / Sackbit). Built with **Rust** for wire-speed WebSocket ingestion (`prost` + `zlib`) and **FastAPI (Python)** for streamed NDJSON historical chunking, factor screening, and domain decimal normalization.
+
+---
+
+## Why hybrid?
+
+| Service | Language | Role & Performance Advantage |
+|---|---|---|
+| `ingest-rs` | **Rust** | Single persistent WSS, `prost` + `flate2` raw deflate `-15`, ~10 µs decode, ~15 MB resident memory, `tokio::broadcast` to 100s of consumers, zero-GC |
+| `api-py` | **Python** | `httpx.stream` window slicing, `Decimal` domain precision, broker/sector/mover taxonomy mapping, embedded WSS fallback |
+
+```
+Sackbit WSS ──► ingest-rs (prost decode → Normalized Event) ──► Redis Streams ──┐
+Sackbit REST ──► api-py (httpx.stream NDJSON chunks) ──────────────────────────┼─► Hub Queue(100) ──► WS /v1/stream + REST /v1/*
+shared/proto/datafeed.proto ◄── Single Source of Truth ─────────────────────────┘
+```
+
+---
+
+## Complete API Surface (Verified)
+
+All endpoints are served under `/v1/*` with money represented as `Decimal` strings for precision and ISO 8601 timestamps with WIB (`+07:00`) localization.
+
+| Domain | Method & Endpoint | Description |
+|---|---|---|
+| **Health** | `GET /v1/health`<br>`GET /v1/ready` | System telemetry, JWT `exp` math (`exp 1788421941`), cache and Hub queue statistics. |
+| **Quotes** | `GET /v1/quotes/{symbol}`<br>`GET /v1/quotes?symbols=...`<br>`GET /v1/quotes/subscriptions`<br>`POST /v1/subscriptions/ensure` | Real-time quote snapshot with automatic fallback to company info. Dynamic subscription management. |
+| **Order Book** | `GET /v1/books/{symbol}`<br>`GET /v1/books?symbols=...`<br>`GET /v1/books/snapshot/{symbol}` | Level 2 5–10 bid/ask depth ladders with automatic fallback to full trade-book snapshot. |
+| **Trades** | `GET /v1/trades?symbols=...&limit=50`<br>`GET /v1/trades/{symbol}?limit=50` | Recent running trade execution ticks buffered from the live WebSocket feed (streams live Mon–Fri 09:00–16:15 WIB). |
+| **Candles** | `GET /v1/candles/{symbol}?from=...&to=...&resolution=daily\|minute` | Continuous historical OHLCV streamed line-by-line via NDJSON (`application/x-ndjson`). |
+| **Charts** | `GET /v1/charts/tradebook?symbol={symbol}&interval=1m`<br>`GET /v1/charts/{symbol}/daily?timeframe=1w`<br>`GET /v1/charts/{symbol}/performance` | Session trade-book volume and lot distribution, timeframe charts, and multi-horizon return performance (1D to 10Y). |
+| **Fundamentals** | `GET /v1/fundamentals/{symbol}`<br>`GET /v1/fundamentals/{symbol}/financials`<br>`GET /v1/companies/{symbol}`<br>`GET /v1/companies/{symbol}/profile`<br>`GET /v1/companies/{symbol}/subsidiaries` | 10-year valuation metrics, structured financial statements (Income Statement, Balance Sheet, Cash Flow), corporate profile, and subsidiary ownership lists. |
+| **Brokers** | `GET /v1/brokers/summary/{symbol}`<br>`GET /v1/brokers/top`<br>`GET /v1/brokers/top-stocks`<br>`GET /v1/brokers/{code}/activity` | Institutional flow (*Bandarmology*), Big Accumulation/Distribution status, top broker volume rankings, top accumulated stocks, and broker activity logs. |
+| **Market** | `GET /v1/market/movers?kind=top_gainers` | Real-time market gainers, losers, volume/value/frequency leaders, net foreign flows, and IEP/IEV indications across all KSE boards. |
+| **Sectors** | `GET /v1/sectors`<br>`GET /v1/sectors/{id}/subsectors`<br>`GET /v1/sectors/{id}/subsectors/{subId}/companies` | 3-tier hierarchical industry taxonomy: 11 sectors, subsectors, and constituent equities. |
+| **Calendars** | `GET /v1/calendars/ipo`<br>`GET /v1/calendars/dividend`<br>`GET /v1/calendars/economic`<br>`GET /v1/calendars/tenderoffer`<br>`GET /v1/calendars/rightissue`<br>`GET /v1/calendars/stocksplit`<br>`GET /v1/calendars/companies/{symbol}/actions` | Live IPO filings, upcoming dividend declarations, macroeconomic releases, tender offers, rights issues, stock splits, and ticker-specific corporate actions. |
+| **Seasonality** | `GET /v1/seasonality/{symbol}?year=2026&back_year=5` | Multi-year monthly return probability and historical performance matrices. |
+| **WebSocket** | `WS /v1/stream?token=$API_KEY` | Full duplex real-time feed supporting `subscribe`, `unsubscribe`, and `ping` actions with `Queue(100)` drop-oldest dispatch. |
+
+*For complete query parameter options, payload structures, and response samples, see [`docs/ENDPOINTS.md`](docs/ENDPOINTS.md).*
+
+---
+
+## Technical Debt & Investigation Backlog (TODO)
+
+Items identified during discovery that function reliably via current fallback/parsers but should be investigated for cleaner native API endpoints if upstream exposes them:
+
+- [ ] **Financial Statements HTML Parsing (`/findata-view/company/financial`)**:
+  - *Current Implementation*: Sackbit returns `html_report` (HTML table string) while `data_tables.periods` and `data_tables.accounts` are returned empty. We currently parse this via `HTMLParser` in `financial_parser.py`.
+  - *Investigation Goal*: Check if Sackbit's newer mobile/web GraphQL or REST endpoints (e.g. `/keystats/v2/*` or `/findata/v2/*`) return clean structured JSON directly.
+- [ ] **Daily Candles Date-Order Quirk (`/chartbit/{symbol}/price/daily`)**:
+  - *Current Implementation*: Sackbit daily requires swapped parameters (`from` = recent date, `to` = older date).
+  - *Investigation Goal*: Ensure whether date range limits can span beyond 5 years in a single request or if window slicing should be enforced for >5Y spans.
+- [ ] **Historical Intraday Tick Tape Outside Market Hours**:
+  - *Current Implementation*: Sackbit only broadcasts ticks over live WebSocket during trading hours (Mon–Fri 09:00–16:15 WIB), with no REST tick endpoint.
+  - *Investigation Goal*: Check if trade-book minute bars from `GET /v1/charts/tradebook` can be combined with local SQLite/Parquet tick storage to provide offline tick replay.
+- [ ] **Broker Top Stocks Investor Filter**:
+  - *Current Implementation*: Defaults to `investor_type=INVESTOR_TYPE_ALL` and `value_type=VALUE_TYPE_NET`.
+  - *Investigation Goal*: Test if raw foreign volume breakdowns can be exposed directly per broker in the `/top-stocks` payload.
+
+---
+
+## Repository Layout
+
+```
+axiom-feed/
+├── docker-compose.yml           # Multi-container orchestration (api-py + ingest-rs + redis)
+├── Makefile                     # Build and lint targets
+├── shared/proto/datafeed.proto  # Canonical protobuf schema (Sackbit wire truth)
+├── docs/
+│   ├── ARCHITECTURE.md          # Architectural boundaries, memory bounds, and design choices
+│   └── ENDPOINTS.md             # Complete endpoint documentation with request/response schemas
+├── examples/
+│   ├── curl.sh                  # Shell curl examples
+│   └── python.py                # Python streaming client example
+├── dashboard/                   # React + Vite interactive exploration tool (zero fake mock data)
+└── services/
+    ├── api-py/                  # Python FastAPI service
+    │   ├── app/
+    │   │   ├── api/v1/          # Modular API routers
+    │   │   ├── domain/          # Pure domain models (Decimal, frozen)
+    │   │   ├── infra/           # Bounded cache & async message bus
+    │   │   ├── providers/       # Sackbit auth, transport, mapping, and HTML parsers
+    │   │   └── core/            # Security & API key verification
+    │   └── tests/               # Pytest test suite
+    └── ingest-rs/               # High-speed Rust Tokio WebSocket ingestion service
+```
+
+---
+
+## Documentation Links
+
+- [Endpoints Reference (`docs/ENDPOINTS.md`)](docs/ENDPOINTS.md)
+- [System Architecture (`docs/ARCHITECTURE.md`)](docs/ARCHITECTURE.md)
+- [Contributing Guidelines (`CONTRIBUTING.md`)](CONTRIBUTING.md)
+- [Security Policy (`SECURITY.md`)](SECURITY.md)
+
+--- 
+
+## Instructions for AI Coding Agents (Read This First)
+
+When a user points you to this repository to start the backend, run development servers, or debug market data feeds, follow these steps and inform the user of authentication requirements:
+
+### 1. Mandatory Authentication Notice (Tell the User First)
+**Sackbit Bearer Tokens are RS256 JWTs that expire every 24 hours (`exp - iat = 86400s`).**
+Before running the backend or making upstream API requests, verify that `.env` contains a fresh, unexpired Bearer token. If expired or missing, ask the user to extract it manually:
+
+> **How the user extracts a fresh Bearer Token:**
+> 1. Open upstream portal in browser and log in.
+> 2. Open Chrome/Firefox DevTools (`F12`) ➔ **Network** tab.
+> 3. Filter for requests to `exodus.sackbit.com` (or the upstream API domain).
+> 4. In **Request Headers**, copy the value of `Authorization: Bearer <token>`.
+> 5. Paste it in `.env` as `STOCKBIT_BEARER_TOKEN="eyJ..."`.
+> 6. *(Optional but recommended)*: In DevTools ➔ **Application** / **Storage** ➔ **Cookies** ➔ copy/export cookies as a JSON array to `./cookies.json` so the server can automatically attempt token refresh before expiration.
+
+---
+
+### 2. How Agents Should Start the Services
+
+#### Option A: Embedded Dev Mode (Fastest — No Docker, No Redis required)
+In embedded mode, FastAPI connects directly to Sackbit WebSocket in a background async task.
+```bash
+# 1. Sync Python virtualenv
+cd services/api-py
+uv sync
+
+# 2. Run backend server
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+#### Option B: Full High-Performance Mode (Rust Ingest + Redis + FastAPI)
+```bash
+# Terminal 1: Backend API
+cd services/api-py && uv sync && uv run uvicorn app.main:app --port 8000
+
+# Terminal 2: Rust Ingestion Engine
+cd services/ingest-rs && cargo run --release
+
+# Terminal 3: Interactive Dashboard
+cd dashboard && npm install && npm run dev
+```
+
+#### Option C: Production Docker Compose
+```bash
+cp .env.example .env
+# Ensure STOCKBIT_BEARER_TOKEN is populated in .env
+docker compose up --build
+```
+
+---
+
+### 3. How Agents Should Verify the Backend is Operational
+```bash
+# 1. Health check & JWT expiration verification
+curl -s http://127.0.0.1:8000/v1/health | jq .
+
+# 2. Daily historical candle streaming test
+curl -s "http://127.0.0.1:8000/v1/candles/BBCA?from=2025-09-02&to=2026-09-02&resolution=daily" | head -n 3
+
+# 3. Live quote test
+curl -s http://127.0.0.1:8000/v1/quotes/BBCA | jq .
+
+# 4. Open Interactive OpenAPI Docs in browser
+# http://127.0.0.1:8000/docs
+```

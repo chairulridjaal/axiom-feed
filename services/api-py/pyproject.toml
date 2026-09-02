@@ -1,0 +1,47 @@
+[project]
+name = "axiom-feed-api"
+version = "0.1.0"
+description = "axiom-feed Python API — FastAPI market data, provider-agnostic domain"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.34",
+  "pydantic>=2.11",
+  "httpx>=0.28",
+  "orjson>=3.10",
+  "websockets>=13",
+  "redis>=5",
+  "tenacity>=9",
+  "python-dotenv>=1",
+  "anyio>=4",
+  "pytz>=2026.3.post1",
+  "python-multipart>=0.0.32",
+  "grpcio-tools>=1.83.1",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8",
+  "pytest-asyncio>=1",
+  "ruff>=0.11",
+  "httpx",
+  "pyright>=1.1",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "C4", "UP"]
+ignore = ["E501", "E402", "B904", "B008", "C401", "E741", "F841", "B011"]
+
+[tool.pyright]
+typeCheckingMode = "basic"
+pythonVersion = "3.11"
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

@@ -1,0 +1,15 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  py:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: cd services/api-py && uv sync && uv run ruff check . && uv run ruff format --check . && uv run pytest -q
+  rs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cd services/ingest-rs && cargo fmt --check && cargo clippy -- -D warnings && cargo test

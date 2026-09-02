@@ -1,0 +1,28 @@
+[package]
+name = "ingest-rs"
+version = "0.1.0"
+edition = "2021"
+description = "axiom-feed ingest — Stockbit WSS → normalized events (prost + tokio)"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+futures-util = "0.3"
+prost = "0.13"
+prost-types = "0.13"
+bytes = "1"
+flate2 = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+redis = { version = "0.26", features = ["tokio-comp"] }
+dotenvy = "0.15"
+anyhow = "1"
+rand = "0.8"
+http = "0.2"
+url = "2"
+chrono = { version = "0.4", features = ["serde"] }
+
+[build-dependencies]
+prost-build = "0.13"
