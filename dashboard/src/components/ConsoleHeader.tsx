@@ -21,6 +21,8 @@ interface ConsoleHeaderProps {
   isLive: boolean;
   backendUrl: string;
   onUpdateBackendUrl: (url: string) => void;
+  apiKey: string;
+  onUpdateApiKey: (key: string) => void;
   onCheckHealth: () => void;
 }
 
@@ -32,10 +34,14 @@ export const ConsoleHeader: React.FC<ConsoleHeaderProps> = ({
   isLive,
   backendUrl,
   onUpdateBackendUrl,
+  apiKey,
+  onUpdateApiKey,
   onCheckHealth,
 }) => {
   const [isEditingUrl, setIsEditingUrl] = useState<boolean>(false);
   const [urlDraft, setUrlDraft] = useState<string>(backendUrl);
+  const [isEditingKey, setIsEditingKey] = useState<boolean>(false);
+  const [keyDraft, setKeyDraft] = useState<string>(apiKey);
 
   const tabs: { id: ConsoleTab; label: string }[] = [
     { id: 'stream', label: '1. Tape & Stream' },
@@ -59,6 +65,12 @@ export const ConsoleHeader: React.FC<ConsoleHeaderProps> = ({
       onUpdateBackendUrl(urlDraft.trim());
       setIsEditingUrl(false);
     }
+  };
+
+  const handleSaveKey = (e: React.FormEvent) => {
+    e.preventDefault();
+    onUpdateApiKey(keyDraft.trim());
+    setIsEditingKey(false);
   };
 
   return (
@@ -137,6 +149,48 @@ export const ConsoleHeader: React.FC<ConsoleHeaderProps> = ({
                 title="Re-check connection"
               >
                 ↻
+              </button>
+            </div>
+          )}
+
+          {/* API Key Button / Form */}
+          {isEditingKey ? (
+            <form onSubmit={handleSaveKey} className="flex items-center gap-1">
+              <input
+                type="password"
+                value={keyDraft}
+                onChange={(e) => setKeyDraft(e.target.value)}
+                className="terminal-input py-0.5 px-2 text-[11px] w-36"
+                placeholder="X-API-Key"
+                autoFocus
+              />
+              <button type="submit" className="btn-primary py-0.5 px-2 text-[10px] cursor-pointer">
+                Set
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsEditingKey(false)}
+                className="btn-ghost py-0.5 px-2 text-[10px] cursor-pointer"
+              >
+                ✕
+              </button>
+            </form>
+          ) : (
+            <div className="flex items-center gap-1.5 bg-[#111111] border border-[#202020] px-2 py-0.5 rounded-[2px] font-mono text-[11px]">
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${
+                  apiKey ? 'bg-[#da5c2c]' : 'bg-[#606060]'
+                }`}
+              />
+              <button
+                onClick={() => {
+                  setKeyDraft(apiKey);
+                  setIsEditingKey(true);
+                }}
+                className="text-[#b4b4b4] hover:text-[#eeeeee] cursor-pointer underline"
+                title="Click to edit API key"
+              >
+                {apiKey ? `KEY ••${apiKey.slice(-4)}` : 'NO KEY'}
               </button>
             </div>
           )}

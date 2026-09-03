@@ -88,6 +88,25 @@ html, body {
   min-height: 100vh;
 }
 
+:root {
+  color-scheme: dark;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid #da5c2c;
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
 /* Terminal scrollbars */
 ::-webkit-scrollbar {
   width: 6px;
@@ -159,9 +178,10 @@ html, body {
   color: #eeeeee;
   border: 1px solid #202020;
   font-family: "JetBrains Mono", "BerkeleyMono", ui-monospace, monospace;
-  font-size: 12px;
+  font-size: 13px;
   border-radius: 2px;
-  padding: 4px 10px;
+  padding: 6px 12px;
+  min-height: 30px;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -186,6 +206,7 @@ html, body {
   font-family: "JetBrains Mono", "BerkeleyMono", ui-monospace, monospace;
   font-size: 13px;
   padding: 8px 12px;
+  min-height: 32px;
   border-radius: 2px;
   outline: none;
   transition: border-color 0.15s ease;

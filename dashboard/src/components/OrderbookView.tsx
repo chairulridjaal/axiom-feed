@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { fetchLiveBook, fetchLiveQuote, getStoredBackendUrl } from '../services/api';
+import { fetchLiveBook, fetchLiveQuote, createLiveWebSocket, getStoredBackendUrl } from '../services/api';
 import { Book, Quote } from '../types/datafeed';
 import { ApiSpecDrawer } from './ApiSpecDrawer';
 
@@ -30,10 +30,60 @@ export const OrderbookView: React.FC<OrderbookViewProps> = ({ selectedSymbol }) 
     };
 
     loadData();
-    const interval = setInterval(loadData, 3000);
+    const interval = setInterval(loadData, 15000);
+
+    const ws = createLiveWebSocket(
+      (msg) => {
+        if (!msg || msg.symbol !== selectedSymbol) return;
+        if (msg.kind === 'book' && msg.payload) {
+          const p = msg.payload;
+          const nb = (p.bids || []).map((b: any) => ({
+            price: (b.price ?? 0).toString(),
+            lots: Number(b.lot ?? b.lots ?? 0),
+          }));
+          const na = (p.offers || p.asks || []).map((a: any) => ({
+            price: (a.price ?? 0).toString(),
+            lots: Number(a.lot ?? a.lots ?? 0),
+          }));
+          setBook((prev) => ({
+            symbol: selectedSymbol,
+            bids: nb.length > 0 ? nb : prev?.bids || [],
+            asks: na.length > 0 ? na : prev?.asks || [],
+            ts: msg.ts || new Date().toISOString(),
+            seq: 1,
+          }));
+        } else if (msg.kind === 'quote' && msg.payload) {
+          const p = msg.payload;
+          setQuote((prev) => ({
+            symbol: selectedSymbol,
+            last: (p.price ?? p.last ?? prev?.last ?? '').toString(),
+            open: p.open?.toString() ?? prev?.open,
+            high: p.high?.toString() ?? prev?.high,
+            low: p.low?.toString() ?? prev?.low,
+            prev_close: prev?.prev_close,
+            change: prev?.change,
+            change_pct: prev?.change_pct,
+            ts: msg.ts || new Date().toISOString(),
+            is_index: selectedSymbol === 'IHSG',
+          }));
+        }
+      },
+      () => {
+        ws.send(JSON.stringify({
+          action: 'subscribe',
+          symbols: [selectedSymbol],
+          kinds: ['books', 'quotes'],
+        }));
+      },
+      () => {},
+      () => {},
+      getStoredBackendUrl()
+    );
+
     return () => {
       mounted = false;
       clearInterval(interval);
+      ws.close();
     };
   }, [selectedSymbol]);
 
@@ -127,8 +177,18 @@ export const OrderbookView: React.FC<OrderbookViewProps> = ({ selectedSymbol }) 
         </div>
       ) : bids.length === 0 && asks.length === 0 ? (
         <div className="border border-[#202020] bg-[#111111] p-8 text-center text-[#7e7e7e] text-[12px] space-y-2">
-          <div className="text-[#eeeeee] font-bold">NO ACTIVE ORDER BOOK DEPTH</div>
-          <div>No active depth levels returned for {selectedSymbol}.</div>
+          {selectedSymbol === 'IHSG' ? (
+            <>
+              <div className="text-[#eeeeee] font-bold">IHSG IS A COMPOSITE INDEX</div>
+              <div>Indices have no order book — no bids or asks exist.</div>
+              <div>Use Tape &amp; Stream (IHSG shows the full-market tape) or Candles for index data.</div>
+            </>
+          ) : (
+            <>
+              <div className="text-[#eeeeee] font-bold">NO ACTIVE ORDER BOOK DEPTH</div>
+              <div>No active depth levels returned for {selectedSymbol}.</div>
+            </>
+          )}
         </div>
       ) : (
         <>
@@ -144,7 +204,7 @@ export const OrderbookView: React.FC<OrderbookViewProps> = ({ selectedSymbol }) 
                 {bids.map((b, i) => {
                   const widthPct = Math.min((b.lots / maxLot) * 100, 100);
                   return (
-                    <div key={i} className="relative flex items-center justify-between px-4 py-2 hover:bg-[#191919] transition-colors">
+                    <div key={i} className="relative flex items-center justify-between px-4 py-2.5 hover:bg-[#191919] text-[13px] transition-colors">
                       <div
                         className="absolute right-0 top-0 bottom-0 bg-[#2a7fff] opacity-15 pointer-events-none"
                         style={{ width: `${widthPct}%` }}
@@ -171,7 +231,7 @@ export const OrderbookView: React.FC<OrderbookViewProps> = ({ selectedSymbol }) 
                 {asks.map((a, i) => {
                   const widthPct = Math.min((a.lots / maxLot) * 100, 100);
                   return (
-                    <div key={i} className="relative flex items-center justify-between px-4 py-2 hover:bg-[#191919] transition-colors">
+                    <div key={i} className="relative flex items-center justify-between px-4 py-2.5 hover:bg-[#191919] text-[13px] transition-colors">
                       <div
                         className="absolute left-0 top-0 bottom-0 bg-[#da5c2c] opacity-15 pointer-events-none"
                         style={{ width: `${widthPct}%` }}

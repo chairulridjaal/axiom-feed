@@ -184,7 +184,7 @@ export const SectorsView: React.FC = () => {
               companies.map((c) => {
                 const isPositive = parseFloat(c.change) >= 0;
                 return (
-                  <div key={c.symbol} className="p-3 flex items-center justify-between hover:bg-[#191919] transition-colors">
+                  <div key={c.symbol} className="p-3.5 flex items-center justify-between hover:bg-[#191919] text-[13px] transition-colors">
                     <div>
                       <div className="font-bold text-[#eeeeee] text-[13px]">{c.symbol}</div>
                       <div className="text-[#7e7e7e] text-[11px] truncate max-w-[130px]">{c.name}</div>

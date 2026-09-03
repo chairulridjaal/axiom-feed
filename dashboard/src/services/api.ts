@@ -366,7 +366,7 @@ export async function fetchBrokersTop(baseUrl: string = getStoredBackendUrl()): 
             const isForeign = (b.group || '').toUpperCase().includes('FOREIGN') || (b.code || '').startsWith('F');
 
             return {
-              code: b.code || '—',
+              code: b.code || '�?"',
               name: b.name || b.code || 'Broker',
               type: isForeign ? 'F' : 'D',
               buy_val: buyVal,
@@ -374,7 +374,10 @@ export async function fetchBrokersTop(baseUrl: string = getStoredBackendUrl()): 
               net_val: netVal,
               buy_vol: Number(b.total_volume || b.buy_vol || 0),
               sell_vol: Number(b.sell_vol || 0),
-              top_stock: b.top_stock || '—',
+              top_stock: b.top_stock || '�?"',
+              total_val: parseFloat(b.total_value || 0),
+              total_vol: Number(b.total_volume || 0),
+              total_freq: Number(b.total_frequency || 0),
             };
           });
         }
@@ -386,15 +389,18 @@ export async function fetchBrokersTop(baseUrl: string = getStoredBackendUrl()): 
 
 export async function fetchBrokerSummary(
   symbol: string,
-  baseUrl: string = getStoredBackendUrl()
+  baseUrl: string = getStoredBackendUrl(),
+  frm?: string,
+  to?: string
 ): Promise<BrokerSummary | null> {
   const candidates = getUrlCandidates(baseUrl);
   const headers = buildHeaders();
   const sym = symbol.toUpperCase();
+  const qs = frm || to ? `?from=${frm || ''}&to=${to || frm || ''}` : '';
 
   for (const base of candidates) {
     try {
-      const res = await fetch(`${base}/v1/brokers/summary/${sym}`, { headers });
+      const res = await fetch(`${base}/v1/brokers/summary/${sym}${qs}`, { headers });
       if (res.ok) {
         const data = await res.json();
         const bdData = data.data?.data || {};
@@ -449,14 +455,17 @@ export async function fetchBrokerTopStocks(baseUrl: string = getStoredBackendUrl
 
 export async function fetchBrokerActivity(
   brokerCode: string,
-  baseUrl: string = getStoredBackendUrl()
+  baseUrl: string = getStoredBackendUrl(),
+  frm?: string,
+  to?: string
 ): Promise<any> {
   const candidates = getUrlCandidates(baseUrl);
   const headers = buildHeaders();
+  const qs = frm || to ? `?from=${frm || ''}&to=${to || frm || ''}` : '';
 
   for (const base of candidates) {
     try {
-      const res = await fetch(`${base}/v1/brokers/${brokerCode.toUpperCase()}/activity`, { headers });
+      const res = await fetch(`${base}/v1/brokers/${brokerCode.toUpperCase()}/activity${qs}`, { headers });
       if (res.ok) {
         const data = await res.json();
         const adata = data.activity?.data || {};
@@ -545,11 +554,11 @@ export async function fetchSectorCompanies(
         const data = await res.json();
         const list = Array.isArray(data.companies) ? data.companies : [];
         return list.map((c: any) => ({
-          symbol: c.symbol || c.stock || '—',
+          symbol: c.symbol || c.stock || '�?"',
           name: c.name || c.symbol || 'Company',
           last: (c.last || c.price || '0').toString(),
           change: (c.change || '0').toString(),
-          change_pct: (c.change_pct || '0').toString().replace('%', ''),
+          change_pct: (c.change_pct || c.percent || '0').toString().replace('%', ''),
           market_cap: c.market_cap?.toString(),
           volume: c.volume ? Number(c.volume) : undefined,
         }));

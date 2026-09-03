@@ -18,13 +18,14 @@ import { SeasonalityView } from './components/SeasonalityView';
 import { ProtoView } from './components/ProtoView';
 import { TelemetryView } from './components/TelemetryView';
 import { BackendOffline } from './components/BackendOffline';
-import { checkBackendHealth, getStoredBackendUrl, setStoredBackendUrl } from './services/api';
+import { checkBackendHealth, getStoredBackendUrl, setStoredBackendUrl, getStoredApiKey, setStoredApiKey } from './services/api';
 import { HealthState } from './types/datafeed';
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ConsoleTab>('stream');
   const [selectedSymbol, setSelectedSymbol] = useState<string>('BBCA');
   const [backendUrl, setBackendUrl] = useState<string>(getStoredBackendUrl());
+  const [apiKey, setApiKey] = useState<string>(getStoredApiKey());
   const [isLive, setIsLive] = useState<boolean>(true);
   const [isChecking, setIsChecking] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | undefined>();
@@ -54,6 +55,12 @@ export const App: React.FC = () => {
     setStoredBackendUrl(newUrl);
     setBackendUrl(newUrl);
     verifyHealth(newUrl);
+  };
+
+  const handleUpdateApiKey = (newKey: string) => {
+    setStoredApiKey(newKey);
+    setApiKey(newKey);
+    verifyHealth(backendUrl);
   };
 
   return (
@@ -97,6 +104,8 @@ export const App: React.FC = () => {
             isLive={isLive}
             backendUrl={backendUrl}
             onUpdateBackendUrl={handleUpdateBackendUrl}
+            apiKey={apiKey}
+            onUpdateApiKey={handleUpdateApiKey}
             onCheckHealth={() => verifyHealth(backendUrl)}
           />
 

@@ -10,6 +10,7 @@ interface StreamViewProps {
 export const StreamView: React.FC<StreamViewProps> = ({ selectedSymbol }) => {
   const [trades, setTrades] = useState<Trade[]>([]);
   const [subscribeQuery, setSubscribeQuery] = useState<string>(selectedSymbol);
+  const subscribedRef = useRef<Set<string>>(new Set([selectedSymbol]));
   const [statusMessage, setStatusMessage] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
   const [wsConnected, setWsConnected] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -48,6 +49,25 @@ export const StreamView: React.FC<StreamViewProps> = ({ selectedSymbol }) => {
             type: 'err',
             text: `Backend Error: ${msg.message || 'Subscription rejected'}`,
           });
+        } else if (msg.kind === 'trade' && msg.payload) {
+          // Live hub event shape: { kind, symbol, payload, ts }
+          const p = msg.payload;
+          const sym = (msg.symbol || p.stock || '').toString().toUpperCase();
+          const subs = subscribedRef.current;
+          if (subs.has('*') || subs.has('IHSG') || subs.has(sym)) {
+            const newTrade: Trade = {
+              symbol: sym,
+              price: (p.price ?? 0).toString(),
+              volume: Number(p.volume || 0),
+              side: (p.side || 'BUY').toString().toUpperCase() as any,
+              board: (p.board || 'RG').toString().toUpperCase() as any,
+              ts: msg.ts || new Date().toISOString(),
+              seq: Number(p.trade_number || Date.now()),
+              change: undefined,
+              change_pct: undefined,
+            };
+            setTrades((prev) => [newTrade, ...prev.slice(0, 49)]);
+          }
         } else if (msg.symbol && msg.price) {
           // Live real trade message
           const newTrade: Trade = {
@@ -67,6 +87,7 @@ export const StreamView: React.FC<StreamViewProps> = ({ selectedSymbol }) => {
       () => {
         setWsConnected(true);
         // Subscribe to selected symbol
+        subscribedRef.current = new Set([selectedSymbol]);
         ws.send(JSON.stringify({
           action: 'subscribe',
           symbols: [selectedSymbol],
@@ -89,6 +110,7 @@ export const StreamView: React.FC<StreamViewProps> = ({ selectedSymbol }) => {
   const handleSubscribe = () => {
     const syms = subscribeQuery.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
     if (wsHandleRef.current && wsHandleRef.current.isConnected()) {
+      subscribedRef.current = new Set(syms);
       wsHandleRef.current.send(JSON.stringify({
         action: 'subscribe',
         symbols: syms,
@@ -108,6 +130,7 @@ export const StreamView: React.FC<StreamViewProps> = ({ selectedSymbol }) => {
 
   const handleTestWildcardTrades = () => {
     setSubscribeQuery('*');
+    subscribedRef.current = new Set(['*']);
     if (wsHandleRef.current && wsHandleRef.current.isConnected()) {
       wsHandleRef.current.send(JSON.stringify({
         action: 'subscribe',

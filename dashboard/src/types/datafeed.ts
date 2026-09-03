@@ -123,6 +123,9 @@ export interface BrokerItem {
   buy_vol: number;
   sell_vol: number;
   top_stock: string;
+  total_val: number;
+  total_vol: number;
+  total_freq: number;
 }
 
 export interface BrokerFlowEntry {

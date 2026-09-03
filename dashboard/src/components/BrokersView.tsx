@@ -13,6 +13,13 @@ export const BrokersView: React.FC<BrokersViewProps> = ({ selectedSymbol }) => {
   const [topStocks, setTopStocks] = useState<{ top_buy: any[]; top_sell: any[] }>({ top_buy: [], top_sell: [] });
   const [selectedBroker, setSelectedBroker] = useState<string>('CC');
   const [brokerActivity, setBrokerActivity] = useState<any | null>(null);
+  const toISODate = (d: Date) => d.toISOString().slice(0, 10);
+  const [sumFrom, setSumFrom] = useState<string>(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    return toISODate(d);
+  });
+  const [sumTo, setSumTo] = useState<string>(() => toISODate(new Date()));
   const [activeSubTab, setActiveSubTab] = useState<'bandar' | 'rankings' | 'top_stocks' | 'activity'>('bandar');
   const [filterType, setFilterType] = useState<'ALL' | 'D' | 'F'>('ALL');
   const [stockDirection, setStockDirection] = useState<'BUY' | 'SELL'>('BUY');
@@ -25,9 +32,9 @@ export const BrokersView: React.FC<BrokersViewProps> = ({ selectedSymbol }) => {
     const loadData = async () => {
       const [topData, sumData, stockData, actData] = await Promise.all([
         fetchBrokersTop(getStoredBackendUrl()),
-        fetchBrokerSummary(selectedSymbol, getStoredBackendUrl()),
+        fetchBrokerSummary(selectedSymbol, getStoredBackendUrl(), sumFrom, sumTo),
         fetchBrokerTopStocks(getStoredBackendUrl()),
-        fetchBrokerActivity(selectedBroker, getStoredBackendUrl()),
+        fetchBrokerActivity(selectedBroker, getStoredBackendUrl(), sumFrom, sumTo),
       ]);
       if (mounted) {
         if (topData) setBrokers(topData);
@@ -42,10 +49,9 @@ export const BrokersView: React.FC<BrokersViewProps> = ({ selectedSymbol }) => {
     return () => {
       mounted = false;
     };
-  }, [selectedSymbol, selectedBroker]);
+  }, [selectedSymbol, selectedBroker, sumFrom, sumTo]);
 
   const filtered = brokers.filter((b) => filterType === 'ALL' || b.type === filterType);
-  const maxNet = Math.max(...brokers.map((b) => Math.abs(b.net_val)), 1);
 
   return (
     <div className="space-y-4 font-mono text-[13px]">
@@ -102,6 +108,21 @@ export const BrokersView: React.FC<BrokersViewProps> = ({ selectedSymbol }) => {
                   <span className="text-[#eeeeee] font-bold text-[14px]">
                     BANDAR ACCUMULATION: {selectedSymbol}
                   </span>
+                  <input
+                    type="date"
+                    value={sumFrom}
+                    onChange={(e) => setSumFrom(e.target.value)}
+                    className="terminal-input py-0.5 px-1.5 text-[11px]"
+                    title="From date"
+                  />
+                  <span className="text-[#3a3a3a]">→</span>
+                  <input
+                    type="date"
+                    value={sumTo}
+                    onChange={(e) => setSumTo(e.target.value)}
+                    className="terminal-input py-0.5 px-1.5 text-[11px]"
+                    title="To date"
+                  />
                   <span
                     className={`px-2 py-0.5 rounded-[2px] font-bold text-[11px] ${
                       summary.status.includes('Acc')
@@ -130,17 +151,17 @@ export const BrokersView: React.FC<BrokersViewProps> = ({ selectedSymbol }) => {
                     <div className="text-[#7e7e7e]">No buyer records</div>
                   ) : (
                     summary.top_buyers.map((b, i) => (
-                      <div key={i} className="flex justify-between py-1 border-b border-[#191919]">
+                      <div key={i} className="flex justify-between py-2 border-b border-[#191919] text-[13px]">
                         <div>
                           <span className="text-[#eeeeee] font-bold">{b.broker_code}</span>
-                          {b.type && <span className="text-[#7e7e7e] text-[10px] ml-1.5">({b.type})</span>}
-                          <div className="text-[#7e7e7e] text-[10px]">Avg: Rp {b.avg_price ? b.avg_price.toFixed(0) : '—'}</div>
+                          {b.type && <span className="text-[#b4b4b4] text-[12px] ml-1.5">({b.type})</span>}
+                          <div className="text-[#b4b4b4] text-[12px]">Avg: Rp {b.avg_price ? b.avg_price.toFixed(0) : '—'}</div>
                         </div>
                         <div className="text-right">
                           <span className="text-[#eeeeee] font-bold">
                             Rp {(b.value / 1e9).toFixed(2)}B
                           </span>
-                          <div className="text-[#7e7e7e] text-[10px]">{b.lots.toLocaleString()} lots</div>
+                          <div className="text-[#b4b4b4] text-[12px]">{b.lots.toLocaleString()} lots</div>
                         </div>
                       </div>
                     ))
@@ -154,17 +175,17 @@ export const BrokersView: React.FC<BrokersViewProps> = ({ selectedSymbol }) => {
                     <div className="text-[#7e7e7e]">No seller records</div>
                   ) : (
                     summary.top_sellers.map((s, i) => (
-                      <div key={i} className="flex justify-between py-1 border-b border-[#191919]">
+                      <div key={i} className="flex justify-between py-2 border-b border-[#191919] text-[13px]">
                         <div>
                           <span className="text-[#da5c2c] font-bold">{s.broker_code}</span>
-                          {s.type && <span className="text-[#7e7e7e] text-[10px] ml-1.5">({s.type})</span>}
-                          <div className="text-[#7e7e7e] text-[10px]">Avg: Rp {s.avg_price ? s.avg_price.toFixed(0) : '—'}</div>
+                          {s.type && <span className="text-[#b4b4b4] text-[12px] ml-1.5">({s.type})</span>}
+                          <div className="text-[#b4b4b4] text-[12px]">Avg: Rp {s.avg_price ? s.avg_price.toFixed(0) : '—'}</div>
                         </div>
                         <div className="text-right">
                           <span className="text-[#da5c2c] font-bold">
                             Rp {(s.value / 1e9).toFixed(2)}B
                           </span>
-                          <div className="text-[#7e7e7e] text-[10px]">{s.lots.toLocaleString()} lots</div>
+                          <div className="text-[#b4b4b4] text-[12px]">{s.lots.toLocaleString()} lots</div>
                         </div>
                       </div>
                     ))
@@ -193,16 +214,12 @@ export const BrokersView: React.FC<BrokersViewProps> = ({ selectedSymbol }) => {
                       <th className="py-2.5 px-3 font-normal">CODE</th>
                       <th className="py-2.5 px-3 font-normal">BROKER NAME</th>
                       <th className="py-2.5 px-3 font-normal">TYPE</th>
-                      <th className="py-2.5 px-3 font-normal text-right">BUY (RP)</th>
-                      <th className="py-2.5 px-3 font-normal text-right">SELL (RP)</th>
-                      <th className="py-2.5 px-3 font-normal text-right">NET VALUE (RP)</th>
+                      <th className="py-2.5 px-3 font-normal text-right">TOTAL (RP)</th>
                       <th className="py-2.5 px-3 font-normal text-right">VOLUME</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#202020] text-[#eeeeee]">
                     {filtered.map((b, idx) => {
-                      const isNetBuy = b.net_val >= 0;
-                      const barWidth = Math.min((Math.abs(b.net_val) / maxNet) * 100, 100);
                       return (
                         <tr key={idx} className="hover:bg-[#191919] transition-colors relative">
                           <td className="py-2 px-3 font-bold text-[#eeeeee]">{b.code}</td>
@@ -212,15 +229,8 @@ export const BrokersView: React.FC<BrokersViewProps> = ({ selectedSymbol }) => {
                               {b.type === 'F' ? 'FOREIGN' : 'DOMESTIC'}
                             </span>
                           </td>
-                          <td className="py-2 px-3 text-right text-[#b4b4b4]">{b.buy_val >= 1e12 ? `${(b.buy_val / 1e12).toFixed(2)}T` : `${(b.buy_val / 1e9).toFixed(1)}B`}</td>
-                          <td className="py-2 px-3 text-right text-[#b4b4b4]">{b.sell_val >= 1e12 ? `${(b.sell_val / 1e12).toFixed(2)}T` : `${(b.sell_val / 1e9).toFixed(1)}B`}</td>
-                          <td className="py-2 px-3 text-right font-bold relative">
-                            <div className={`absolute right-0 top-0 bottom-0 opacity-15 pointer-events-none ${isNetBuy ? 'bg-[#2a7fff]' : 'bg-[#da5c2c]'}`} style={{ width: `${barWidth}%` }} />
-                            <span className={`relative z-10 ${isNetBuy ? 'text-[#eeeeee]' : 'text-[#da5c2c]'}`}>
-                              {isNetBuy ? `+${(b.net_val / 1e9).toFixed(1)}B` : `${(b.net_val / 1e9).toFixed(1)}B`}
-                            </span>
-                          </td>
-                          <td className="py-2 px-3 text-right text-[#7e7e7e]">{b.buy_vol ? b.buy_vol.toLocaleString() : '—'}</td>
+                          <td className="py-2 px-3 text-right text-[#eeeeee]">{b.total_val >= 1e12 ? `${(b.total_val / 1e12).toFixed(2)}T` : `${(b.total_val / 1e9).toFixed(1)}B`}</td>
+                          <td className="py-2 px-3 text-right text-[#7e7e7e]">{b.total_vol ? b.total_vol.toLocaleString() : '—'}</td>
                         </tr>
                       );
                     })}
@@ -284,7 +294,7 @@ export const BrokersView: React.FC<BrokersViewProps> = ({ selectedSymbol }) => {
 
           {activeSubTab === 'activity' && (
             <div className="space-y-3">
-              <div className="flex items-center gap-2 p-3 bg-[#000000] border border-[#202020] rounded-[2px]">
+              <div className="flex flex-wrap items-center gap-2 p-3 bg-[#000000] border border-[#202020] rounded-[2px]">
                 <span className="text-[#7e7e7e] text-[12px]">Broker Code:</span>
                 {['CC', 'AK', 'YP', 'XL', 'ZP', 'BK', 'PD', 'KZ'].map((code) => (
                   <button
@@ -295,6 +305,21 @@ export const BrokersView: React.FC<BrokersViewProps> = ({ selectedSymbol }) => {
                     {code}
                   </button>
                 ))}
+                <input
+                  type="date"
+                  value={sumFrom}
+                  onChange={(e) => setSumFrom(e.target.value)}
+                  className="terminal-input py-0.5 px-1.5 text-[11px] ml-2"
+                  title="From date"
+                />
+                <span className="text-[#3a3a3a]">→</span>
+                <input
+                  type="date"
+                  value={sumTo}
+                  onChange={(e) => setSumTo(e.target.value)}
+                  className="terminal-input py-0.5 px-1.5 text-[11px]"
+                  title="To date"
+                />
               </div>
 
               {brokerActivity && (
@@ -309,14 +334,14 @@ export const BrokersView: React.FC<BrokersViewProps> = ({ selectedSymbol }) => {
                         <div className="p-4 text-center text-[#7e7e7e] text-[12px]">No buys recorded</div>
                       ) : (
                         brokerActivity.buys.map((b: any, idx: number) => (
-                          <div key={idx} className="p-2.5 flex justify-between items-center hover:bg-[#191919] text-[12px]">
+                          <div key={idx} className="p-3.5 flex justify-between items-center hover:bg-[#191919] text-[13px]">
                             <div>
-                              <div className="font-bold text-[#eeeeee]">{b.stock}</div>
-                              <div className="text-[#7e7e7e] text-[11px]">Avg: Rp {b.avg_price ? b.avg_price.toFixed(0) : '—'}</div>
+                              <div className="font-bold text-[#eeeeee] text-[14px]">{b.stock}</div>
+                              <div className="text-[#b4b4b4] text-[12px]">Avg: Rp {b.avg_price ? b.avg_price.toFixed(0) : '—'}</div>
                             </div>
                             <div className="text-right">
                               <div className="font-bold text-[#eeeeee]">Rp {(b.value / 1e9).toFixed(2)}B</div>
-                              <div className="text-[#7e7e7e] text-[11px]">{b.lots.toLocaleString()} lots</div>
+                              <div className="text-[#b4b4b4] text-[12px]">{b.lots.toLocaleString()} lots</div>
                             </div>
                           </div>
                         ))
@@ -334,10 +359,10 @@ export const BrokersView: React.FC<BrokersViewProps> = ({ selectedSymbol }) => {
                         <div className="p-4 text-center text-[#7e7e7e] text-[12px]">No sells recorded</div>
                       ) : (
                         brokerActivity.sells.map((s: any, idx: number) => (
-                          <div key={idx} className="p-2.5 flex justify-between items-center hover:bg-[#191919] text-[12px]">
+                          <div key={idx} className="p-3.5 flex justify-between items-center hover:bg-[#191919] text-[13px]">
                             <div>
-                              <div className="font-bold text-[#da5c2c]">{s.stock}</div>
-                              <div className="text-[#7e7e7e] text-[11px]">Avg: Rp {s.avg_price ? s.avg_price.toFixed(0) : '—'}</div>
+                              <div className="font-bold text-[#da5c2c] text-[14px]">{s.stock}</div>
+                              <div className="text-[#b4b4b4] text-[12px]">Avg: Rp {s.avg_price ? s.avg_price.toFixed(0) : '—'}</div>
                             </div>
                             <div className="text-right">
                               <div className="font-bold text-[#da5c2c]">Rp {(s.value / 1e9).toFixed(2)}B</div>
