@@ -29,24 +29,30 @@ EXODUS = "https://exodus.stockbit.com"
 
 
 class RateLimiter:
+    """Lock-free cooperative asyncio token bucket.
+
+    In Python's cooperative single-threaded asyncio loop, synchronous token
+    accounting is atomic across tasks on the same tick. Staggered deficit
+    subtraction sequences concurrent waiters without mutex lock contention.
+    """
+
     def __init__(self, rps: float = 10.0):
         self.rps = rps
         self._tokens = rps
         self._updated = time.monotonic()
-        self._lock = asyncio.Lock()
 
     async def acquire(self) -> None:
-        async with self._lock:
-            now = time.monotonic()
-            elapsed = now - self._updated
-            self._updated = now
-            self._tokens = min(self.rps, self._tokens + elapsed * self.rps)
-            if self._tokens < 1:
-                wait = (1 - self._tokens) / self.rps
-                self._tokens = 0
-            else:
-                wait = 0.0
-                self._tokens -= 1
+        now = time.monotonic()
+        elapsed = now - self._updated
+        self._updated = now
+        self._tokens = min(self.rps, self._tokens + elapsed * self.rps)
+        if self._tokens < 1.0:
+            deficit = 1.0 - self._tokens
+            self._tokens -= 1.0
+            wait = deficit / self.rps
+        else:
+            self._tokens -= 1.0
+            wait = 0.0
         if wait > 0:
             await asyncio.sleep(wait)
 
@@ -142,11 +148,12 @@ class HttpxTransport:
         self,
         url: str,
         params: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
         label: str = "GET",
     ) -> Any:
         await self.limiter.acquire()
         async with self.semaphore():
-            resp = await self.client().get(url, params=params)
+            resp = await self.client().get(url, params=params, headers=headers)
             if resp.status_code == 401:
                 from app.providers.stockbit.auth import get_auth
 
@@ -157,7 +164,46 @@ class HttpxTransport:
                             "401 received in get_json — attempting silent refresh via refresh_token"
                         )
                         await auth.refresh_tokens_via_stockbit()
-                        resp = await self.client().get(url, params=params)
+                        resp = await self.client().get(url, params=params, headers=headers)
+                    except Exception as e:
+                        logger.warning(f"On-demand refresh failed after 401: {e}")
+            if resp.status_code == 429:
+                ra = resp.headers.get("Retry-After")
+                if ra:
+                    try:
+                        await asyncio.sleep(float(ra))
+                    except Exception:
+                        await asyncio.sleep(1)
+            resp.raise_for_status()
+            return orjson.loads(resp.content)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=0.5, min=0.5, max=8),
+        retry=retry_if_exception(_is_retryable),
+        reraise=True,
+    )
+    async def post_json(
+        self,
+        url: str,
+        json: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+        label: str = "POST",
+    ) -> Any:
+        await self.limiter.acquire()
+        async with self.semaphore():
+            resp = await self.client().post(url, json=json, params=params)
+            if resp.status_code == 401:
+                from app.providers.stockbit.auth import get_auth
+
+                auth = get_auth()
+                if auth and auth.refresh_token:
+                    try:
+                        logger.info(
+                            "401 received in post_json — attempting silent refresh via refresh_token"
+                        )
+                        await auth.refresh_tokens_via_stockbit()
+                        resp = await self.client().post(url, json=json, params=params)
                     except Exception as e:
                         logger.warning(f"On-demand refresh failed after 401: {e}")
             if resp.status_code == 429:

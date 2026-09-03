@@ -157,9 +157,14 @@ app.add_middleware(
 from app.api.v1 import books as books_mod
 from app.api.v1 import brokers as brokers_mod
 from app.api.v1 import charts as charts_mod
+from app.api.v1 import estimates as estimates_mod
 from app.api.v1 import fundamentals as fund_mod
+from app.api.v1 import insider as insider_mod
 from app.api.v1 import market as market_mod
+from app.api.v1 import news as news_mod
 from app.api.v1 import quotes as quotes_mod
+from app.api.v1 import research as research_mod
+from app.api.v1 import screeners as screeners_mod
 from app.api.v1 import sectors as sectors_mod
 from app.api.v1 import trades as trades_mod
 from app.api.v1.candles import init_candles
@@ -177,6 +182,11 @@ app.include_router(fund_mod.router)
 app.include_router(sectors_mod.router)
 app.include_router(brokers_mod.router)
 app.include_router(market_mod.router)
+app.include_router(estimates_mod.router)
+app.include_router(insider_mod.router)
+app.include_router(screeners_mod.router)
+app.include_router(research_mod.router)
+app.include_router(news_mod.router)
 
 
 # health already mounted; fallback root

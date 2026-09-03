@@ -92,3 +92,70 @@ async def company_subsidiaries(symbol: str):
         }
     except Exception as e:
         return {"symbol": symbol.upper(), "subsidiaries": [], "error": str(e)}
+
+
+@router.get("/v1/fundamentals/{symbol}/valuation")
+async def company_valuation(
+    symbol: str,
+    eps_value: str | None = Query(None, description="Custom EPS value or leave empty for default"),
+    growth_value: str | None = Query(
+        None, description="Custom Growth % value or leave empty for default"
+    ),
+    multiple_value: str | None = Query(
+        None, description="Custom P/E multiple or leave empty for default"
+    ),
+):
+    """Calculate DCF / Graham model fair value target price, margin of safety, and consensus range."""
+    p = get_provider()
+    try:
+        data = await p.company_valuation(
+            symbol=symbol,
+            eps_value=eps_value,
+            growth_value=growth_value,
+            multiple_value=multiple_value,
+        )
+        raw_data = data.get("data") if isinstance(data, dict) else data
+        return {
+            "symbol": symbol.upper(),
+            "valuation": raw_data,
+        }
+    except Exception as e:
+        raise HTTPException(502, f"Failed to calculate valuation for {symbol}: {e}")
+
+
+@router.get("/v1/fundamentals/{symbol}/valuation/metrics")
+async def company_valuation_metrics(symbol: str):
+    """Retrieve current EPS, historical growth rates, and valuation multiples used as model inputs."""
+    p = get_provider()
+    try:
+        data = await p.valuation_metrics(symbol=symbol)
+        raw_data = data.get("data") if isinstance(data, dict) else data
+        return {
+            "symbol": symbol.upper(),
+            "metrics": raw_data,
+        }
+    except Exception as e:
+        raise HTTPException(502, f"Failed to fetch valuation metrics for {symbol}: {e}")
+
+
+@router.get("/v1/fundamentals/{symbol}/history")
+async def fundamental_history(
+    symbol: str,
+    item_id: int = Query(
+        2661, description="Metric item ID (default: 2661 for Price, or PE, PBV, ROE etc.)"
+    ),
+    timeframe: str = Query("1y", description="Timeframe horizon (e.g. 1y, 3y, 5y, 10y)"),
+):
+    """Retrieve multi-year daily time-series for fundamental ratios and valuation metrics."""
+    p = get_provider()
+    try:
+        data = await p.fundachart_data(item=item_id, companies=symbol, timeframe=timeframe)
+        raw_data = data.get("data") if isinstance(data, dict) else data
+        return {
+            "symbol": symbol.upper(),
+            "item_id": item_id,
+            "timeframe": timeframe,
+            "series": raw_data,
+        }
+    except Exception as e:
+        raise HTTPException(502, f"Failed to fetch fundamental history for {symbol}: {e}")

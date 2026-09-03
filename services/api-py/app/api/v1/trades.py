@@ -62,3 +62,21 @@ async def trades_by_symbol(symbol: str, limit: int = Query(50, ge=1, le=500)):
         except Exception:
             pass
     return {"symbol": symbol.upper(), "limit": limit, "trades": []}
+
+
+@router.get("/v1/trades/running/snapshot")
+async def running_trades_snapshot(
+    limit: int = Query(80, ge=1, le=200, description="Number of execution ticks"),
+    sort: str = Query("DESC", description="Sort order"),
+    order_by: str = Query("RUNNING_TRADE_ORDER_BY_TIME", description="Order by criterion"),
+):
+    """Retrieve upstream snapshot of recent market-wide trade executions."""
+    from app.providers.stockbit.provider import get_provider
+
+    prov = get_provider()
+    try:
+        data = await prov.running_trade_snapshot(sort=sort, limit=limit, order_by=order_by)
+        raw_data = data.get("data") if isinstance(data, dict) else data
+        return {"running_trades": raw_data}
+    except Exception as e:
+        return {"running_trades": None, "error": str(e)}

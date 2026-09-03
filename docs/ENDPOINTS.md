@@ -815,3 +815,353 @@ ws://localhost:8000/v1/stream?token=$API_KEY
   }
 }
 ```
+
+---
+
+## 15. Analyst Consensus, Estimates & Research
+
+---
+
+### `GET /v1/estimates/{symbol}/consensus`
+Returns forward multi-horizon analyst estimates (Revenue, Operating Profit, Net Profit, EPS) spanning historical actuals and next 2-3 fiscal years.
+
+#### Parameters
+| Name | In | Type | Required | Default | Description |
+|---|---|---|---|---|---|
+| `symbol` | Path | `string` | **Yes** | — | Stock ticker (e.g. `BBCA`, `AALI`) |
+
+#### Example Request
+```bash
+curl -s http://localhost:8000/v1/estimates/AALI/consensus | jq .
+```
+
+#### Example Response (`200 OK`)
+```json
+{
+  "symbol": "AALI",
+  "consensus": [
+    {
+      "name": "Revenue",
+      "items": [
+        { "year": 2025, "is_estimate": false, "value": "28,655 B", "raw_value": 0 },
+        { "year": 2026, "is_estimate": true, "value": "29,083 B", "raw_value": 0 },
+        { "year": 2027, "is_estimate": true, "value": "29,678 B", "raw_value": 0 }
+      ]
+    },
+    {
+      "name": "EPS",
+      "items": [
+        { "year": 2025, "is_estimate": false, "value": "578.10", "raw_value": 0 },
+        { "year": 2026, "is_estimate": true, "value": "612.40", "raw_value": 0 }
+      ]
+    }
+  ]
+}
+```
+
+---
+
+### `GET /v1/estimates/{symbol}/ratings`
+Returns analyst consensus target price ranges (High, Low, Average) and recommendation breakdown (Buy, Hold, Sell).
+
+#### Parameters
+| Name | In | Type | Required | Default | Description |
+|---|---|---|---|---|---|
+| `symbol` | Path | `string` | **Yes** | — | Stock ticker (e.g. `BBCA`, `AALI`) |
+
+#### Example Response (`200 OK`)
+```json
+{
+  "symbol": "AALI",
+  "ratings": {
+    "price_target": {
+      "best_target": 8050,
+      "best_low_target": 6440,
+      "best_high_target": 11600,
+      "current_price": 8575
+    },
+    "recommendation": "Buy",
+    "total_buy": 4,
+    "total_hold": 9,
+    "total_sell": 0,
+    "total_analyst": 13,
+    "last_updated": "31 Aug 26"
+  }
+}
+```
+
+---
+
+### `GET /v1/estimates/{symbol}/research`
+Returns official equity research reports, notes, and coverage history.
+
+---
+
+## 16. Insider Trading & Major Shareholding Intelligence
+
+---
+
+### `GET /v1/insider/movements`
+Monitors all mandatory filings by substantial shareholders (>= 5%) and company directors/commissioners across the Indonesia Stock Exchange.
+
+#### Parameters
+| Name | In | Type | Required | Default | Description |
+|---|---|---|---|---|---|
+| `date_start` | Query | `string` | **Yes** | — | Start date (`YYYY-MM-DD`) |
+| `date_end` | Query | `string` | **Yes** | — | End date (`YYYY-MM-DD`) |
+| `page` | Query | `integer` | No | `1` | Pagination page |
+| `limit` | Query | `integer` | No | `20` | Items per page (max: `100`) |
+
+#### Example Request
+```bash
+curl -s "http://localhost:8000/v1/insider/movements?date_start=2026-08-01&date_end=2026-09-01" | jq .
+```
+
+#### Example Response (`200 OK`)
+```json
+{
+  "date_start": "2026-08-01",
+  "date_end": "2026-09-01",
+  "page": 1,
+  "limit": 20,
+  "data": {
+    "is_more": true,
+    "movement": [
+      {
+        "name": "NICHOLAS SANTOSO",
+        "symbol": "NICK",
+        "date": "02 Sep 26",
+        "previous": { "value": "284,200", "percentage": "0.04" },
+        "current": { "value": "291,600", "percentage": "0.04" },
+        "changes": { "value": "+7,400", "percentage": "+0.0012" }
+      }
+    ]
+  }
+}
+```
+
+---
+
+### `GET /v1/companies/{symbol}/shareholders`
+Returns structured ownership breakdown (Controller, Domestic Institution, Foreign Institution, Public, Management).
+
+#### Example Request
+```bash
+curl -s http://localhost:8000/v1/companies/BBCA/shareholders | jq .
+```
+
+---
+
+### `GET /v1/companies/{symbol}/shareholders/trend`
+Multi-year monthly progression of shareholder counts and percentage changes.
+
+---
+
+## 17. Guru & Quantitative Screeners
+
+---
+
+### `GET /v1/screeners/presets`
+Lists all available pre-built quantitative and Guru investment screeners (Piotroski F-Score, Kenneth Fisher P/S, EV/EBITDA, Graham Net-Net, etc.).
+
+#### Example Response (`200 OK`)
+```json
+{
+  "presets": [
+    {
+      "id": 11,
+      "name": "Guru Screener",
+      "childs": [
+        {
+          "id": 1,
+          "name": "Value Screener",
+          "childs": [
+            { "id": 2, "name": "Kenneth Fisher Price To Sales", "type": "TEMPLATE_TYPE_GURU" },
+            { "id": 3, "name": "Piotroski F-Score Price To Earnings", "type": "TEMPLATE_TYPE_GURU" }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+---
+
+### `GET /v1/screeners/presets/{preset_id}`
+Executes a screener preset and returns matching tickers with exact calculated valuation/financial criteria.
+
+#### Example Request
+```bash
+curl -s http://localhost:8000/v1/screeners/presets/2 | jq .
+```
+
+---
+
+## 18. Valuation Engine (DCF & Graham Fair Value)
+
+---
+
+### `GET /v1/fundamentals/{symbol}/valuation`
+Computes fair value target price, margin of safety (%), and consensus valuation benchmarks.
+
+#### Parameters
+| Name | In | Type | Required | Default | Description |
+|---|---|---|---|---|---|
+| `symbol` | Path | `string` | **Yes** | — | Stock ticker |
+| `eps_value` | Query | `string` | No | Auto | Custom EPS input (or defaults to TTM) |
+| `growth_value` | Query | `string` | No | Auto | Custom growth rate % |
+| `multiple_value` | Query | `string` | No | Auto | Custom P/E target multiple |
+
+#### Example Response (`200 OK`)
+```json
+{
+  "symbol": "BBCA",
+  "valuation": {
+    "current_price": "6,775.00",
+    "target_price": "9,484.73",
+    "margin_safety": "40",
+    "consensus_low": "6,500.00",
+    "consensus_medium": "8,142.84",
+    "consensus_high": "10,100.00"
+  }
+}
+```
+
+---
+
+### `GET /v1/fundamentals/{symbol}/valuation/metrics`
+Returns current baseline valuation inputs (EPS, historical growth, default P/E).
+
+---
+
+### `GET /v1/fundamentals/{symbol}/history`
+Returns multi-year historical daily time-series points for any fundamental ratio or valuation item (Price, PE, PBV, ROE, etc.).
+
+#### Parameters
+| Name | In | Type | Required | Default | Description |
+|---|---|---|---|---|---|
+| `symbol` | Path | `string` | **Yes** | — | Stock ticker |
+| `item_id` | Query | `integer` | No | `2661` | Metric item ID (default `2661` for Price) |
+| `timeframe` | Query | `string` | No | `1y` | Timeframe (`1y`, `3y`, `5y`, `10y`) |
+
+#### Example Request
+```bash
+curl -s "http://localhost:8000/v1/fundamentals/BBCA/history?item_id=2661&timeframe=1y" | jq .
+```
+
+---
+
+## 19. Advanced Institutional Flow & Broker Matrix
+
+---
+
+### `GET /v1/brokers/{symbol}/distribution`
+Cross-checks buyer-to-seller broker matching matrix (who bought from whom).
+
+#### Example Request
+```bash
+curl -s "http://localhost:8000/v1/brokers/BBCA/distribution" | jq .
+```
+
+---
+
+### `GET /v1/flow/{symbol}/foreign-domestic`
+Returns cumulative Foreign Buy vs Foreign Sell vs Domestic institutional flow.
+
+#### Parameters
+| Name | In | Type | Required | Default | Description |
+|---|---|---|---|---|---|
+| `symbol` | Path | `string` | **Yes** | — | Stock ticker |
+| `period` | Query | `string` | No | `PERIOD_RANGE_1D` | Range (`PERIOD_RANGE_1D`, `PERIOD_RANGE_1W`, `PERIOD_RANGE_1M`) |
+
+---
+
+### `GET /v1/brokers/{code}/chart`
+Returns intraday transaction activity chart for a broker code.
+
+---
+
+### `GET /v1/brokers/{code}/history`
+Tracks multi-horizon historical daily accumulation/distribution of a broker code on a specific stock.
+
+#### Parameters
+| Name | In | Type | Required | Default | Description |
+|---|---|---|---|---|---|
+| `code` | Path | `string` | **Yes** | — | Broker code (e.g. `XL`, `YP`, `ZP`) |
+| `symbols` | Query | `string` | **Yes** | — | Stock ticker (e.g. `BBCA`) |
+| `period` | Query | `string` | No | `RT_PERIOD_LAST_1_YEAR` | Horizon |
+
+---
+
+### `GET /v1/trades/running/snapshot`
+Returns an immediate REST snapshot of recent market-wide execution ticks.
+
+---
+
+## 20. Institutional Research & Morning Briefings
+
+---
+
+### `GET /v1/research/morning-notes`
+Retrieves daily pre-market macro notes, sector updates, and analyst views directly from the official Stockbit Reports broadcast desk (Room `338965`).
+
+#### Parameters
+| Name | In | Type | Required | Default | Description |
+|---|---|---|---|---|---|
+| `limit` | Query | `integer` | No | `50` | Maximum messages to return |
+| `cursor_id` | Query | `integer` | No | — | Message ID cursor for pagination |
+
+#### Example Request
+```bash
+curl -s http://localhost:8000/v1/research/morning-notes | jq .
+```
+
+---
+
+### `GET /v1/research/reports`
+Retrieves institutional equity research reports, morning notes, and thesis writeups published by an analyst desk.
+
+#### Parameters
+| Name | In | Type | Required | Default | Description |
+|---|---|---|---|---|---|
+| `account` | Query | `string` | No | `StockbitReports` | Analyst account handle |
+| `last_stream_id` | Query | `integer` | No | `0` | Cursor for pagination |
+| `limit` | Query | `integer` | No | `20` | Items per page (max: `50`) |
+
+#### Example Request
+```bash
+curl -s http://localhost:8000/v1/research/reports?account=StockbitReports | jq .
+```
+
+---
+
+### `GET /v1/research/reports/{post_id}`
+Retrieves full research report detail including thesis breakdown, PDF report attachments, and financial models.
+
+#### Example Request
+```bash
+curl -s http://localhost:8000/v1/research/reports/35455618 | jq .
+```
+
+---
+
+## 21. Equity News & Regulatory Disclosures
+
+---
+
+### `GET /v1/news/{symbol}`
+Retrieves live breaking news, corporate disclosures, and regulatory filings for an equity ticker.
+
+#### Parameters
+| Name | In | Type | Required | Default | Description |
+|---|---|---|---|---|---|
+| `symbol` | Path | `string` | **Yes** | — | Stock ticker (e.g. `BBCA`, `TLKM`) |
+| `category` | Query | `string` | No | `STREAM_CATEGORY_ALL` | Category filter |
+| `last_stream_id` | Query | `integer` | No | `0` | Cursor for pagination |
+| `limit` | Query | `integer` | No | `20` | Items per page |
+
+#### Example Request
+```bash
+curl -s http://localhost:8000/v1/news/BBCA | jq .
+```

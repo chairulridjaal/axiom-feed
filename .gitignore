@@ -6,6 +6,8 @@
 *.key
 *.cert
 cookies.json
+*.jsonl
+docs/DISCOVERED_ENDPOINTS.jsonl
 
 # ── Python & Environments ────────────────────────────────────────────────
 __pycache__/
