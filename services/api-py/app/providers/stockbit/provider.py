@@ -139,6 +139,16 @@ class LiveFeedState:
                     from datetime import datetime
 
                     ts = datetime.now(_WIB_TZ) if _WIB_TZ else datetime.now()
+                    prev = self.books.get(symbol)
+                    if prev is not None:
+                        if not bids_raw:
+                            bids_raw = [
+                                {"price": str(lv.price), "lot": lv.lots} for lv in prev.bids
+                            ]
+                        if not offers_raw:
+                            offers_raw = [
+                                {"price": str(lv.price), "lot": lv.lots} for lv in prev.asks
+                            ]
                     book = map_orderbook_body_to_book(symbol, bids_raw, offers_raw, ts=ts)
                     self.ingest_book(book)
                 elif "body" in payload:

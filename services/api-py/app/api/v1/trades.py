@@ -15,10 +15,12 @@ async def trades(
     live = prov.live_feed()
     if hasattr(live, "snapshot_trades"):
         try:
-            all_trades = live.snapshot_trades(limit=limit)
             if symbols:
                 wanted = {s.strip().upper() for s in symbols.split(",") if s.strip()}
-                all_trades = [t for t in all_trades if t.symbol in wanted]
+                pool = live.snapshot_trades(limit=1000)
+                all_trades = [t for t in pool if t.symbol in wanted]
+            else:
+                all_trades = live.snapshot_trades(limit=limit)
             out = [
                 {
                     "symbol": t.symbol,

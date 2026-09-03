@@ -247,6 +247,22 @@ async def run_embedded_ingest(provider, hub):
                                     b = map_legacy_orderbook_msg(wrapper.orderbook)
                                     if b:
                                         provider.live_feed().ingest_book(b)
+                                        await hub.publish(
+                                            {
+                                                "kind": "book",
+                                                "symbol": b.symbol,
+                                                "payload": {
+                                                    "bids": [
+                                                        {"price": float(lv.price), "lot": lv.lots}
+                                                        for lv in b.bids
+                                                    ],
+                                                    "offers": [
+                                                        {"price": float(lv.price), "lot": lv.lots}
+                                                        for lv in b.asks
+                                                    ],
+                                                },
+                                            }
+                                        )
                                 elif which == "orderbook_body":
                                     from app.providers.stockbit.mapping import (
                                         map_orderbook_body_to_book,
@@ -257,6 +273,22 @@ async def run_embedded_ingest(provider, hub):
                                         ob.stock_symbol, ob.bid, ob.offer
                                     )
                                     provider.live_feed().ingest_book(book)
+                                    await hub.publish(
+                                        {
+                                            "kind": "book",
+                                            "symbol": book.symbol,
+                                            "payload": {
+                                                "bids": [
+                                                    {"price": float(lv.price), "lot": lv.lots}
+                                                    for lv in book.bids
+                                                ],
+                                                "offers": [
+                                                    {"price": float(lv.price), "lot": lv.lots}
+                                                    for lv in book.asks
+                                                ],
+                                            },
+                                        }
+                                    )
                                 elif which is None:
                                     logger.warning(
                                         f"Embedded WSS empty wrapper raw_len={len(raw_msg)} "
