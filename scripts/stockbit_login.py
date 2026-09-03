@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import re
 import subprocess
 import time
@@ -103,7 +102,11 @@ async def main():
         proc.terminate()
         return
 
-    page = [t for t in tabs if "stockbit.com" in (t.get("url", "") or "") and t.get("type") == "page"]
+    page = [
+        t
+        for t in tabs
+        if "stockbit.com" in (t.get("url", "") or "") and t.get("type") == "page"
+    ]
     if not page:
         page = [t for t in tabs if t.get("type") == "page"]
 
@@ -128,7 +131,9 @@ async def main():
         if method == "Network.requestWillBeSent":
             req = m.get("params", {}).get("request", {})
             auth = req.get("headers", {}).get("Authorization", "")
-            if auth.startswith("Bearer eyJ") and "exodus.stockbit.com" in req.get("url", ""):
+            if auth.startswith("Bearer eyJ") and "exodus.stockbit.com" in req.get(
+                "url", ""
+            ):
                 tok = auth.split(" ", 1)[1].strip()
                 if not access_token:
                     access_token = tok
@@ -137,9 +142,17 @@ async def main():
         elif method == "Network.responseReceived":
             res = m.get("params", {}).get("response", {})
             url = res.get("url", "")
-            if "login" in url and "verify" in url:
+            if "login" in url or "auth" in url or "token" in url:
                 req_id = m.get("params", {}).get("requestId")
-                ws.send(json.dumps({"id": 2, "method": "Network.getResponseBody", "params": {"requestId": req_id}}))
+                ws.send(
+                    json.dumps(
+                        {
+                            "id": 2,
+                            "method": "Network.getResponseBody",
+                            "params": {"requestId": req_id},
+                        }
+                    )
+                )
                 while True:
                     m2 = json.loads(ws.recv())
                     if m2.get("id") == 2:
@@ -150,6 +163,7 @@ async def main():
                             ref = d.get("refresh", {}).get("token")
                             if acc:
                                 access_token = acc
+                                print("Found Bearer token from login response!")
                             if ref:
                                 refresh_token = ref
                                 print("Found 7-day Refresh token!")
@@ -159,6 +173,35 @@ async def main():
 
         if access_token and refresh_token:
             break
+
+    # Also capture all session cookies from browser
+    try:
+        ws.send(
+            json.dumps(
+                {
+                    "id": 3,
+                    "method": "Network.getCookies",
+                    "params": {
+                        "urls": ["https://stockbit.com", "https://exodus.stockbit.com"]
+                    },
+                }
+            )
+        )
+        while True:
+            m3 = json.loads(ws.recv())
+            if m3.get("id") == 3:
+                cookies_list = m3.get("result", {}).get("cookies", [])
+                if cookies_list:
+                    cookies_path = Path("cookies.json")
+                    cookies_path.write_text(
+                        json.dumps(cookies_list, indent=2), encoding="utf-8"
+                    )
+                    print(
+                        f"Exported {len(cookies_list)} session cookies to {cookies_path.resolve()}!"
+                    )
+                break
+    except Exception:
+        pass
 
     ws.close()
     proc.terminate()

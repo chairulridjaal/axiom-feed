@@ -30,7 +30,7 @@ fn try_zlib(d: &[u8]) -> Result<Vec<u8>, std::io::Error> {
     use flate2::read::ZlibDecoder;
     use std::io::Read;
     let mut dec = ZlibDecoder::new(d);
-    let mut out = Vec::with_capacity(d.len().saturating_mul(2).max(256));
+    let mut out = Vec::with_capacity(d.len().saturating_mul(4).max(512));
     dec.read_to_end(&mut out)?;
     Ok(out)
 }
@@ -39,7 +39,7 @@ fn try_deflate(d: &[u8]) -> Result<Vec<u8>, std::io::Error> {
     use flate2::read::DeflateDecoder;
     use std::io::Read;
     let mut dec = DeflateDecoder::new(d);
-    let mut out = Vec::with_capacity(d.len().saturating_mul(2).max(256));
+    let mut out = Vec::with_capacity(d.len().saturating_mul(4).max(512));
     dec.read_to_end(&mut out)?;
     Ok(out)
 }
@@ -87,44 +87,33 @@ pub fn parse_pipe(body: &str) -> (Vec<serde_json::Value>, Vec<serde_json::Value>
     if !body.contains('|') {
         return (bids, asks);
     }
-    let parts: Vec<&str> = body.split('|').collect();
-    if parts.len() < 4 {
-        return (bids, asks);
-    }
-    let mut bid_idx: Option<usize> = None;
-    let mut offer_idx: Option<usize> = None;
-    for (i, p) in parts.iter().enumerate() {
-        let t = p.trim();
-        if t.eq_ignore_ascii_case("BID") {
-            bid_idx = Some(i);
-        } else if t.eq_ignore_ascii_case("OFFER") || t.eq_ignore_ascii_case("ASK") {
-            offer_idx = Some(i);
+    let mut mode = 0u8; // 0 = None, 1 = Bid, 2 = Offer/Ask
+    for part in body.split('|') {
+        let trimmed = part.trim();
+        if trimmed.is_empty() {
+            continue;
         }
-    }
-    if bid_idx.is_none() && offer_idx.is_none() {
-        return (bids, asks);
-    }
-    let parse_segment = |start: usize, end: usize, out: &mut Vec<serde_json::Value>| {
-        for s in &parts[start..end] {
-            let s = s.trim();
-            if s.is_empty() {
-                continue;
-            }
-            let f: Vec<&str> = s.split(';').collect();
-            if f.len() < 2 {
-                continue;
-            }
-            if let (Ok(price), Ok(lot)) = (f[0].parse::<f64>(), f[1].parse::<f64>()) {
-                out.push(serde_json::json!({"price": price, "lot": lot as i64}));
+        if trimmed.eq_ignore_ascii_case("BID") {
+            mode = 1;
+            continue;
+        } else if trimmed.eq_ignore_ascii_case("OFFER") || trimmed.eq_ignore_ascii_case("ASK") {
+            mode = 2;
+            continue;
+        }
+        if mode == 0 {
+            continue;
+        }
+        let mut fields = trimmed.split(';');
+        if let (Some(price_str), Some(lot_str)) = (fields.next(), fields.next()) {
+            if let (Ok(price), Ok(lot)) = (price_str.parse::<f64>(), lot_str.parse::<f64>()) {
+                let entry = serde_json::json!({"price": price, "lot": lot as i64});
+                if mode == 1 {
+                    bids.push(entry);
+                } else if mode == 2 {
+                    asks.push(entry);
+                }
             }
         }
-    };
-    if let Some(bi) = bid_idx {
-        let end = offer_idx.unwrap_or(parts.len());
-        parse_segment(bi + 1, end, &mut bids);
-    }
-    if let Some(oi) = offer_idx {
-        parse_segment(oi + 1, parts.len(), &mut asks);
     }
     (bids, asks)
 }

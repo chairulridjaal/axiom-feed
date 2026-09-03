@@ -123,6 +123,15 @@ async def redis_consumer_task(hub: Hub, redis_url: str):
             else:
                 logger.debug(f"xgroup_create skipped: {e}")
 
+        # Resolve live feed reference once for loop
+        live_feed = None
+        try:
+            from app.providers.stockbit.provider import get_provider
+
+            live_feed = get_provider().live_feed()
+        except Exception:
+            pass
+
         while True:
             try:
                 if group_created:
@@ -162,12 +171,11 @@ async def redis_consumer_task(hub: Hub, redis_url: str):
                                 await _fanout_trade_batch(hub, evt)
                             else:
                                 await hub.publish(evt)
-                            try:
-                                from app.providers.stockbit.provider import get_provider
-
-                                get_provider().live_feed().ingest_hub_event(evt)
-                            except Exception:
-                                pass
+                            if live_feed is not None:
+                                try:
+                                    live_feed.ingest_hub_event(evt)
+                                except Exception:
+                                    pass
                         if group_created:
                             ack_ids.append(entry_id)
                     if group_created and ack_ids:

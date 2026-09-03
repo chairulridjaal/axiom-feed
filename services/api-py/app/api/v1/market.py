@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.core.security import verify_api_key
 from app.providers.stockbit.provider import get_provider
@@ -85,5 +85,8 @@ async def company_actions(symbol: str, limit: int = Query(30)):
 @router.get("/v1/seasonality/{symbol}")
 async def seasonality(symbol: str, year: int = Query(2026), back_year: int = Query(5)):
     p = get_provider()
-    data = await p.seasonality(symbol, year, back_year)
-    return {"symbol": symbol.upper(), "year": year, "back_year": back_year, "data": data}
+    try:
+        data = await p.seasonality(symbol, year, back_year)
+        return {"symbol": symbol.upper(), "year": year, "back_year": back_year, "data": data}
+    except Exception as e:
+        raise HTTPException(502, f"Failed to fetch seasonality for {symbol}: {e}")

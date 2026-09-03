@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
+import orjson
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.core.security import verify_ws_token
@@ -87,7 +88,23 @@ async def _sender(ws: WebSocket, q: asyncio.Queue):
     try:
         while True:
             msg = await q.get()
-            await ws.send_json(msg)
+            if isinstance(msg, str):
+                await ws.send_text(msg)
+            elif isinstance(msg, (bytes, bytearray)):
+                await ws.send_bytes(bytes(msg))
+            elif isinstance(msg, dict):
+                text = msg.get("_json_text")
+                if text is None:
+                    clean = (
+                        {k: v for k, v in msg.items() if not k.startswith("_")}
+                        if any(k.startswith("_") for k in msg)
+                        else msg
+                    )
+                    text = orjson.dumps(clean, default=str).decode("utf-8")
+                    msg["_json_text"] = text
+                await ws.send_text(text)
+            else:
+                await ws.send_text(orjson.dumps(msg, default=str).decode("utf-8"))
     except asyncio.CancelledError:
         pass
     except Exception:

@@ -63,6 +63,7 @@ async def run_embedded_ingest(provider, hub):
 
     import google.protobuf.timestamp_pb2  # noqa: F401 — registers timestamp.proto in the pool
     import websockets
+    from websockets.typing import Subprotocol
 
     from app.providers.stockbit.auth import get_auth
     from app.providers.stockbit.generated import datafeed_pb2 as pb_module
@@ -94,7 +95,7 @@ async def run_embedded_ingest(provider, hub):
                 ws_url,
                 additional_headers=headers,
                 user_agent_header="Mozilla/5.0",
-                subprotocols=["web"],
+                subprotocols=[Subprotocol("web")],
                 ping_interval=None,
                 compression=None,
                 max_size=16 * 1024 * 1024,
