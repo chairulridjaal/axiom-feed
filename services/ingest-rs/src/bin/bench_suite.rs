@@ -19,11 +19,18 @@ fn compress_raw_deflate(data: &[u8]) -> Vec<u8> {
     encoder.finish().unwrap()
 }
 
+fn compress_zlib(data: &[u8]) -> Vec<u8> {
+    use flate2::write::ZlibEncoder;
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(data).unwrap();
+    encoder.finish().unwrap()
+}
+
 fn try_zlib(d: &[u8]) -> Result<Vec<u8>, std::io::Error> {
     use flate2::read::ZlibDecoder;
     use std::io::Read;
     let mut dec = ZlibDecoder::new(d);
-    let mut out = Vec::new();
+    let mut out = Vec::with_capacity(d.len().saturating_mul(2).max(256));
     dec.read_to_end(&mut out)?;
     Ok(out)
 }
@@ -32,24 +39,40 @@ fn try_deflate(d: &[u8]) -> Result<Vec<u8>, std::io::Error> {
     use flate2::read::DeflateDecoder;
     use std::io::Read;
     let mut dec = DeflateDecoder::new(d);
-    let mut out = Vec::new();
+    let mut out = Vec::with_capacity(d.len().saturating_mul(2).max(256));
     dec.read_to_end(&mut out)?;
     Ok(out)
 }
 
 pub fn decompress_baseline(bytes: &[u8]) -> Vec<u8> {
-    if let Ok(v) = try_zlib(bytes) {
-        if !v.is_empty() && v.len() > 8 {
-            return v;
-        }
+    if bytes.is_empty() {
+        return Vec::new();
     }
-    for suffix in [false, true] {
-        let data: Vec<u8> = if suffix {
-            [bytes, b"\x00\x00\xff\xff" as &[u8]].concat()
-        } else {
-            bytes.to_vec()
-        };
+    let is_zlib = bytes.len() >= 2 && bytes[0] == 0x78;
+    if is_zlib {
+        if let Ok(v) = try_zlib(bytes) {
+            if !v.is_empty() && v.len() > 8 {
+                return v;
+            }
+        }
+        if let Ok(v) = try_deflate(bytes) {
+            if !v.is_empty() && v.len() > 8 {
+                return v;
+            }
+        }
+    } else {
+        if let Ok(v) = try_deflate(bytes) {
+            if !v.is_empty() && v.len() > 8 {
+                return v;
+            }
+        }
+        let data: Vec<u8> = [bytes, b"\x00\x00\xff\xff" as &[u8]].concat();
         if let Ok(v) = try_deflate(&data) {
+            if !v.is_empty() && v.len() > 8 {
+                return v;
+            }
+        }
+        if let Ok(v) = try_zlib(bytes) {
             if !v.is_empty() && v.len() > 8 {
                 return v;
             }
@@ -71,10 +94,10 @@ pub fn parse_pipe(body: &str) -> (Vec<serde_json::Value>, Vec<serde_json::Value>
     let mut bid_idx: Option<usize> = None;
     let mut offer_idx: Option<usize> = None;
     for (i, p) in parts.iter().enumerate() {
-        let u = p.trim().to_ascii_uppercase();
-        if u == "BID" {
+        let t = p.trim();
+        if t.eq_ignore_ascii_case("BID") {
             bid_idx = Some(i);
-        } else if u == "OFFER" || u == "ASK" {
+        } else if t.eq_ignore_ascii_case("OFFER") || t.eq_ignore_ascii_case("ASK") {
             offer_idx = Some(i);
         }
     }
@@ -165,6 +188,9 @@ fn create_sample_liveprice() -> Vec<u8> {
         order_book_id: 0,
         order_number: 0,
         match_number: 0,
+        board_flag: 1,
+        match_time: "2026-09-02T14:30:00+07:00".to_string(),
+        lot_volume: 52000.0,
     };
     let wrap = WebsocketWrapMessageChannel {
         message_channel: Some(websocket_wrap_message_channel::MessageChannel::Liveprice(
@@ -255,6 +281,19 @@ async fn main() {
     }
     decompress_durations.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
+    // Measure Decompress on zlib-wrapped input (header sniff should route
+    // straight to zlib; the old triple-try order burned two deflate attempts).
+    let trade_batch_zlib = compress_zlib(&decompress_baseline(&trade_batch_wire));
+    assert!(!trade_batch_zlib.is_empty() && trade_batch_zlib[0] == 0x78);
+    let mut zlib_durations = Vec::with_capacity(10000);
+    for _ in 0..10000 {
+        let t0 = Instant::now();
+        let out = decompress_baseline(&trade_batch_zlib);
+        assert!(!out.is_empty());
+        zlib_durations.push(t0.elapsed().as_secs_f64() * 1_000_000.0); // us
+    }
+    zlib_durations.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
     // Measure Protobuf Decode
     let decompressed = decompress_baseline(&trade_batch_wire);
     let mut proto_durations = Vec::with_capacity(10000);
@@ -284,6 +323,15 @@ async fn main() {
         percentile(&decompress_durations, 99.0),
         decompress_durations[0],
         decompress_durations[decompress_durations.len() - 1]
+    );
+
+    println!(
+        "Decompress (zlib-wrapped input):              p50={:.2}us, p95={:.2}us, p99={:.2}us, min={:.2}us, max={:.2}us",
+        percentile(&zlib_durations, 50.0),
+        percentile(&zlib_durations, 95.0),
+        percentile(&zlib_durations, 99.0),
+        zlib_durations[0],
+        zlib_durations[zlib_durations.len() - 1]
     );
 
     println!(

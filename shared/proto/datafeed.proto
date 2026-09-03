@@ -48,9 +48,9 @@ message RunningTradeBatch {
 // Synced 2026-09-03 against the official web client bundle
 // (securities.transactional.datafeed.v1.LivePrice): field 6 is now `open`
 // (was prev_close), 11 is `date` string, 12 `close`, 13 `prev`, 15 is a
-// Change message (was raw bytes), 18 `is_index` bool. Fields 23+
-// (board/source/switch_reset/itch/trade_trigger/lot) omitted — the parser
-// skips them as unknown fields.
+// Change message (was raw bytes), 18 `is_index` bool. Fields 23/26/28
+// confirmed on live wire 2026-09-03 (BBCA/TLKM/GOTO/IHSG capture);
+// 24/25/27 never observed and are reserved.
 message LivePrice {
   string stock_code = 1;
   double lastprice = 2;     // Last traded price
@@ -74,6 +74,10 @@ message LivePrice {
   int64 order_book_id = 20;
   int64 order_number = 21;
   int64 match_number = 22;
+  int32 board_flag = 23;  // wire varint, always 1 in samples; exact enum TBD
+  reserved 24, 25, 27;
+  string match_time = 26;  // nano-precision ts, ~1ms after date; absent on indices
+  double lot_volume = 28;  // == volume/100 (lots) on equities; index aggregate on IHSG
 }
 
 message Orderbook {
