@@ -60,17 +60,18 @@ impl FeedState {
         Ok(())
     }
 
-    pub fn build_request(&self, user_id: &str, ws_key: &str) -> Vec<u8> {
+    pub fn build_request(&self, user_id: &str, ws_key: &str, access_token: &str) -> Vec<u8> {
         let mut req = WebsocketRequest {
             user_id: user_id.to_string(),
             key: ws_key.to_string(),
+            access_token: access_token.to_string(),
             channel: Some(WebsocketChannel {
                 running_trade_batch: vec!["*".to_string()],
                 watchlist: vec!["*".to_string()],
                 liveprice: self.liveprice.iter().cloned().collect(),
                 order_book: self.orderbook.iter().cloned().collect(),
                 running_trade: vec![],
-                orderbook_body: vec![],
+                is_hotlist: false,
             }),
             ping: None,
         };
@@ -99,6 +100,7 @@ impl FeedState {
         let req = WebsocketRequest {
             user_id: "".into(),
             key: "".into(),
+            access_token: "".into(),
             channel: None,
             ping: Some(PingRequest {
                 timestamp: Some(ts),
@@ -135,7 +137,7 @@ mod tests {
             .unwrap();
         assert!(s.liveprice.contains("TLKM"));
         assert!(s.orderbook.contains("TLKM"));
-        let buf = s.build_request("u1", "k1");
+        let buf = s.build_request("u1", "k1", "tok");
         assert!(!buf.is_empty());
     }
 

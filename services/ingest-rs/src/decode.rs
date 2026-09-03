@@ -129,7 +129,7 @@ pub fn decode(bytes: &[u8]) -> Option<Vec<NormalizedEvent>> {
             });
         }
         MessageChannel::RunningTradeBatch(b) => {
-            for t in b.trades {
+            for t in b.batch {
                 out.push(NormalizedEvent {
                     kind: "trade".into(),
                     symbol: t.stock.clone(),
@@ -147,17 +147,17 @@ pub fn decode(bytes: &[u8]) -> Option<Vec<NormalizedEvent>> {
         MessageChannel::Liveprice(lp) => {
             out.push(NormalizedEvent {
                 kind: "quote".into(),
-                symbol: lp.stock.clone(),
+                symbol: lp.stock_code.clone(),
                 payload: serde_json::json!({
-                    "stock": lp.stock,
-                    "price": lp.price,
+                    "stock_code": lp.stock_code,
+                    "lastprice": lp.lastprice,
                     "volume": lp.volume,
                     "high": lp.high,
                     "low": lp.low,
-                    "prev_close": lp.prev_close,
+                    "prev": lp.prev,
                     "frequency": lp.frequency,
                     "average": lp.average,
-                    "time_str": lp.time_str,
+                    "date": lp.date,
                     "open": lp.open,
                     "value": lp.value,
                     "is_index": lp.is_index,
@@ -205,6 +205,13 @@ pub fn decode(bytes: &[u8]) -> Option<Vec<NormalizedEvent>> {
                 kind: "ping".into(),
                 symbol: "".into(),
                 payload: serde_json::json!({"type": "pong"}),
+            });
+        }
+        MessageChannel::Error(e) => {
+            out.push(NormalizedEvent {
+                kind: "error".into(),
+                symbol: "".into(),
+                payload: serde_json::json!({"code": e.code, "message": e.message}),
             });
         }
     }

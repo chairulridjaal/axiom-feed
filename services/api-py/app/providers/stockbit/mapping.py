@@ -139,24 +139,32 @@ def map_legacy_orderbook_msg(ob_legacy: Any) -> Book | None:
 
 
 def map_liveprice_to_quote(lp: Any) -> Quote:
-    # lp may be dict (REST) or proto object
+    # lp may be dict (REST) or proto object. Proto layout follows the official
+    # client (stock_code/lastprice/date/prev + Change message); dict callers
+    # use legacy stock/price/time_str keys — both are accepted here.
     def _g(k, default=None):
         if isinstance(lp, dict):
             return lp.get(k, default)
         return getattr(lp, k, default)
 
-    stock = str(_g("stock", "") or _g("stock_symbol", "")).upper()
-    # proto fields: price, open, high, low, prev_close, average, value, volume, frequency, time_str, is_index
-    price = Decimal(str(_g("price", 0) or 0))
+    def _first(*keys, default=None):
+        for k in keys:
+            v = _g(k, None)
+            if v is not None and v != "":
+                return v
+        return default
+
+    stock = str(_first("stock_code", "stock", "stock_symbol", default="")).upper()
+    price = Decimal(str(_first("lastprice", "price", default=0) or 0))
     volume = int(float(_g("volume", 0) or 0))
     high = _g("high")
     low = _g("low")
-    prev_close = _g("prev_close") if _g("prev_close") is not None else _g("prevClose")
+    prev_close = _first("prev", "prev_close", "prevClose")
     freq = _g("frequency")
     avg = _g("average")
     value = _g("value")
     open_p = _g("open")
-    time_str = _g("time_str") or _g("time") or _g("timestamp") or ""
+    time_str = _first("date", "time_str", "time", "timestamp", default="")
     is_index = bool(_g("is_index", 0))
 
     ts: datetime

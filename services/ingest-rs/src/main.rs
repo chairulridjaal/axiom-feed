@@ -176,7 +176,7 @@ async fn run_loop(
             }
         };
 
-        let sub = feed_state.build_request(&user_id, &ws_key);
+        let sub = feed_state.build_request(&user_id, &ws_key, &bearer);
         if let Err(e) = ws_stream.send(Message::Binary(sub)).await {
             warn!("send sub failed: {}", e);
         } else {

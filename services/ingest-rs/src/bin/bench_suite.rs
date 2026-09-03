@@ -126,12 +126,13 @@ fn create_sample_trade_batch() -> Vec<u8> {
             }),
             trade_number: 100000 + i,
             market_board: 1, // RG
+            value: 0.0,
         });
     }
     let wrap = WebsocketWrapMessageChannel {
         message_channel: Some(
             websocket_wrap_message_channel::MessageChannel::RunningTradeBatch(RunningTradeBatch {
-                trades,
+                batch: trades,
             }),
         ),
     };
@@ -142,21 +143,28 @@ fn create_sample_trade_batch() -> Vec<u8> {
 
 fn create_sample_liveprice() -> Vec<u8> {
     let lp = LivePrice {
-        stock: "BBRI".to_string(),
-        price: 4850.0,
+        stock_code: "BBRI".to_string(),
+        lastprice: 4850.0,
         volume: 5200000.0,
         high: 4900.0,
         low: 4800.0,
-        prev_close: 4820.0,
-        frequency: 18450.0,
-        average: 4860.0,
-        time_str: "2026-09-02T14:30:00+07:00".to_string(),
         open: 4830.0,
-        close_indicator: 4850.0,
+        frequency: 18450.0,
+        frg_buy: 0.0,
+        frg_sell: 0.0,
+        average: 4860.0,
+        date: "2026-09-02T14:30:00+07:00".to_string(),
+        close: 4850.0,
+        prev: 4820.0,
         value: 25272000000.0,
-        change_data: vec![],
-        extra: "".to_string(),
-        is_index: 0,
+        change: None,
+        order_verb: "".to_string(),
+        quantity: 0,
+        is_index: false,
+        sequence_number: 0,
+        order_book_id: 0,
+        order_number: 0,
+        match_number: 0,
     };
     let wrap = WebsocketWrapMessageChannel {
         message_channel: Some(websocket_wrap_message_channel::MessageChannel::Liveprice(
@@ -337,7 +345,7 @@ async fn main() {
                 if let Some(websocket_wrap_message_channel::MessageChannel::RunningTradeBatch(b)) =
                     msg.message_channel
                 {
-                    for t in b.trades {
+                    for t in b.batch {
                         let p = serde_json::json!({
                             "kind": "trade",
                             "symbol": t.stock,
@@ -403,10 +411,10 @@ async fn main() {
             let msg = WebsocketWrapMessageChannel::decode(decomp.as_slice()).unwrap();
             let _json = match msg.message_channel.unwrap() {
                 websocket_wrap_message_channel::MessageChannel::RunningTradeBatch(b) => {
-                    serde_json::json!({"trades_count": b.trades.len()}).to_string()
+                    serde_json::json!({"trades_count": b.batch.len()}).to_string()
                 }
                 websocket_wrap_message_channel::MessageChannel::Liveprice(lp) => {
-                    serde_json::json!({"price": lp.price, "volume": lp.volume}).to_string()
+                    serde_json::json!({"price": lp.lastprice, "volume": lp.volume}).to_string()
                 }
                 websocket_wrap_message_channel::MessageChannel::OrderbookBody(ob) => {
                     serde_json::json!({"bids": ob.bid.len(), "offers": ob.offer.len()}).to_string()
@@ -438,7 +446,7 @@ async fn main() {
     if let Some(websocket_wrap_message_channel::MessageChannel::RunningTradeBatch(b)) =
         msg.message_channel
     {
-        let t = &b.trades[0];
+        let t = &b.batch[0];
         println!("Protobuf raw price: {}", t.price);
         println!("Protobuf raw volume: {}", t.volume);
         println!("Protobuf raw change: {:?}", t.change);

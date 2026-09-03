@@ -37,47 +37,43 @@ message RunningTrade {
   Change change = 8;
   int64 trade_number = 9;
   BoardType market_board = 10;
+  double value = 11;
 }
 
 message RunningTradeBatch {
-  repeated RunningTrade trades = 1;
+  repeated RunningTrade batch = 1;
 }
 
 // LivePrice — real-time price snapshot per symbol.
-// The server sends a much richer message than originally assumed.
-// Wire-format analysis (2026-02-09) shows these fields:
-//   f1  string  stock symbol ("BBRI", "IHSG")
-//   f2  double  last price
-//   f3  double  volume (shares traded)
-//   f4  double  high price
-//   f5  double  low price
-//   f6  double  previous close
-//   f7  double  frequency (number of trades)
-//   f10 double  average price (not always present — IHSG omits it)
-//   f11 string  ISO-8601 timestamp
-//   f12 double  open price
-//   f13 double  another price field (possibly adjusted/weighted)
-//   f14 double  value (total Rp traded)
-//   f15 bytes   sub-message (change data — further decode needed)
-//   f16 string  (empty in samples)
-//   f17 int32   flag (1 for indices like IHSG)
+// Synced 2026-09-03 against the official web client bundle
+// (securities.transactional.datafeed.v1.LivePrice): field 6 is now `open`
+// (was prev_close), 11 is `date` string, 12 `close`, 13 `prev`, 15 is a
+// Change message (was raw bytes), 18 `is_index` bool. Fields 23+
+// (board/source/switch_reset/itch/trade_trigger/lot) omitted — the parser
+// skips them as unknown fields.
 message LivePrice {
-  string stock = 1;
-  double price = 2;           // Last traded price
-  double volume = 3;          // Total volume (shares)
-  double high = 4;            // Day high
-  double low = 5;             // Day low
-  double prev_close = 6;      // Previous close
-  double frequency = 7;       // Number of trades today
-  // field 8, 9 not observed
-  double average = 10;        // Average/VWAP price
-  string time_str = 11;       // ISO-8601 timestamp as string
-  double open = 12;           // Day open price
-  double close_indicator = 13; // Another price field
-  double value = 14;          // Total value traded (Rp)
-  bytes change_data = 15;     // Sub-message with change info
-  string extra = 16;          // Observed as empty string
-  int32 is_index = 17;        // 1 for index (IHSG), 0 for stocks
+  string stock_code = 1;
+  double lastprice = 2;     // Last traded price
+  double volume = 3;        // Total volume (shares)
+  double high = 4;          // Day high
+  double low = 5;           // Day low
+  double open = 6;          // Day open price
+  double frequency = 7;     // Number of trades today
+  double frg_buy = 8;       // Foreign buy
+  double frg_sell = 9;      // Foreign sell
+  double average = 10;      // Average/VWAP price
+  string date = 11;         // ISO-8601 timestamp as string
+  double close = 12;        // Another price field
+  double prev = 13;         // Previous close
+  double value = 14;        // Total value traded (Rp)
+  Change change = 15;       // Change info
+  string order_verb = 16;
+  int64 quantity = 17;
+  bool is_index = 18;       // true for index (IHSG)
+  int64 sequence_number = 19;
+  int64 order_book_id = 20;
+  int64 order_number = 21;
+  int64 match_number = 22;
 }
 
 message Orderbook {
@@ -126,10 +122,22 @@ message WebsocketWrapMessageChannel {
     RunningTrade running_trade = 1;
     PingResponse ping = 2;
     OrderBookBody orderbook_body = 6;  // Pure protobuf orderbook
+    Error error = 7;                   // Server error, e.g. 401 unauthorized
     RunningTradeBatch running_trade_batch = 8;
     LivePrice liveprice = 9;
     Orderbook orderbook = 10;  // Hybrid orderbook (text body)
   }
+}
+
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  ERROR_CODE_BAD_REQUEST = 400;
+  ERROR_CODE_UNAUTHORIZED = 401;
+}
+
+message Error {
+  ErrorCode code = 1;
+  string message = 2;
 }
 
 // Request Messages
@@ -141,10 +149,9 @@ message WebsocketChannel {
   repeated string watchlist = 1;
   repeated string order_book = 2;
   repeated string running_trade = 3;
-  // Note: tag 4 is likely reserved/unused
+  bool is_hotlist = 4;
   repeated string running_trade_batch = 5;
   repeated string liveprice = 6;
-  repeated string orderbook_body = 7;  // Subscribe to pure protobuf orderbook
 }
 
 message WebsocketRequest {
@@ -152,4 +159,5 @@ message WebsocketRequest {
   WebsocketChannel channel = 2;
   string key = 3;
   PingRequest ping = 4;
+  string access_token = 5;
 }
