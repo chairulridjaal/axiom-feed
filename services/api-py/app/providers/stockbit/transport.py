@@ -29,24 +29,24 @@ EXODUS = "https://exodus.stockbit.com"
 
 
 class RateLimiter:
-    """Token bucket 10 rps."""
-
     def __init__(self, rps: float = 10.0):
         self.rps = rps
         self._tokens = rps
         self._updated = time.monotonic()
+        self._lock = asyncio.Lock()
 
     async def acquire(self) -> None:
-        now = time.monotonic()
-        elapsed = now - self._updated
-        self._updated = now
-        self._tokens = min(self.rps, self._tokens + elapsed * self.rps)
-        if self._tokens < 1:
-            wait = (1 - self._tokens) / self.rps
-            self._tokens = 0
-        else:
-            wait = 0.0
-            self._tokens -= 1
+        async with self._lock:
+            now = time.monotonic()
+            elapsed = now - self._updated
+            self._updated = now
+            self._tokens = min(self.rps, self._tokens + elapsed * self.rps)
+            if self._tokens < 1:
+                wait = (1 - self._tokens) / self.rps
+                self._tokens = 0
+            else:
+                wait = 0.0
+                self._tokens -= 1
         if wait > 0:
             await asyncio.sleep(wait)
 

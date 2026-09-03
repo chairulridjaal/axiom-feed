@@ -18,8 +18,15 @@ def init_health(hub: Hub, cache: BoundedCache):
         ah = auth.health() if auth else {"bearer_set": False}
         is_expired = ah.get("is_expired", False)
         bearer_set = ah.get("bearer_set", False)
-        websocket_connected = (not is_expired) if bearer_set else True
-        entitlement_active = websocket_connected and bearer_set if bearer_set else True
+        if auth is None:
+            websocket_connected = True
+            entitlement_active = True
+        elif bearer_set:
+            websocket_connected = not is_expired
+            entitlement_active = websocket_connected
+        else:
+            websocket_connected = os.getenv("INGEST_MODE", "redis") == "embedded"
+            entitlement_active = websocket_connected
         hub_stats = hub.stats()
         degraded_by_hub = hub_stats.get("messages_dropped", 0) > 5000
         status = "healthy" if (entitlement_active and not degraded_by_hub) else "degraded"

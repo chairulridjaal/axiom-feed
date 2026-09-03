@@ -18,6 +18,21 @@ CONSUMER_GROUP = "axiom-feed-api"
 CONSUMER_NAME = "api-py-1"
 
 
+async def _fanout_trade_batch(hub: Hub, evt: dict) -> None:
+    payload = evt.get("payload") or {}
+    trades = payload.get("trades") if isinstance(payload, dict) else None
+    if not isinstance(trades, list):
+        return
+    ts = evt.get("ts")
+    for t in trades:
+        if not isinstance(t, dict):
+            continue
+        symbol = str(t.get("stock") or evt.get("symbol") or "").upper()
+        if not symbol:
+            continue
+        await hub.publish({"kind": "trade", "symbol": symbol, "payload": t, "ts": ts})
+
+
 class Hub:
     """Per-client Queue(100) drop-oldest with bounded clients."""
 
@@ -52,7 +67,6 @@ class Hub:
             try:
                 q.put_nowait(event)
             except asyncio.QueueFull:
-                self.messages_dropped += 1
                 try:
                     q.get_nowait()
                 except Exception:
@@ -60,7 +74,8 @@ class Hub:
                 try:
                     q.put_nowait(event)
                 except Exception:
-                    self.messages_dropped += 1
+                    pass
+                self.messages_dropped += 1
 
     def client_count(self) -> int:
         return len(self._clients)
@@ -124,6 +139,7 @@ async def redis_consumer_task(hub: Hub, redis_url: str):
                 if not resp:
                     continue
                 for _stream, entries in resp:
+                    ack_ids: list = []
                     for entry_id, fields in entries:  # type: ignore[assignment]
                         last_id = entry_id
                         raw: object = fields.get("payload")
@@ -142,19 +158,23 @@ async def redis_consumer_task(hub: Hub, redis_url: str):
                         except Exception:
                             evt = {"raw": raw}
                         if isinstance(evt, dict):
-                            await hub.publish(evt)
+                            if evt.get("kind") == "trade_batch":
+                                await _fanout_trade_batch(hub, evt)
+                            else:
+                                await hub.publish(evt)
                             try:
                                 from app.providers.stockbit.provider import get_provider
 
                                 get_provider().live_feed().ingest_hub_event(evt)
                             except Exception:
                                 pass
-                        # ack if using group
                         if group_created:
-                            try:
-                                await r.xack(STREAM, CONSUMER_GROUP, entry_id)
-                            except Exception:
-                                pass
+                            ack_ids.append(entry_id)
+                    if group_created and ack_ids:
+                        try:
+                            await r.xack(STREAM, CONSUMER_GROUP, *ack_ids)
+                        except Exception:
+                            pass
                         # trim is done by producer MAXLEN ~1000
             except asyncio.CancelledError:
                 break

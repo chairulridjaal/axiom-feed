@@ -208,7 +208,7 @@ class AuthManager:
                 await asyncio.sleep(30)
                 if self.cookies_path.exists():
                     m = self.cookies_path.stat().st_mtime
-                    if self._mtime is None or m > (self._mtime or 0) + 0.5:
+                    if self._mtime is None or m > (self._mtime or 0) + 2.0:
                         logger.info(
                             f"cookies.json mtime changed ({self._mtime} -> {m}) — refreshing auth"
                         )

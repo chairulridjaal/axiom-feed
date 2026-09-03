@@ -101,6 +101,17 @@ class LiveFeedState:
     def ingest_hub_event(self, event: dict):
         try:
             kind = event.get("kind", "")
+            if kind == "trade_batch":
+                payload = event.get("payload", {}) or {}
+                trades = payload.get("trades") if isinstance(payload, dict) else None
+                if not isinstance(trades, list):
+                    return
+                for t in trades:
+                    if isinstance(t, dict):
+                        self.ingest_hub_event(
+                            {"kind": "trade", "symbol": t.get("stock") or event.get("symbol", ""), "payload": t}
+                        )
+                return
             if kind not in ("quote", "book", "trade"):
                 return
             symbol = str(event.get("symbol", "")).upper()
@@ -229,6 +240,8 @@ class StockbitProvider:
             return
 
         # Intraday/minute resolution
+        import asyncio
+
         slice_days = SLICE_INTRADAY
         windows: list[tuple[date, date]] = []
         cur = frm
@@ -237,22 +250,31 @@ class StockbitProvider:
             windows.append((cur, nxt))
             cur = nxt + timedelta(days=1)
 
-        seen_ts = set()
-        for w_from, w_to in windows:
+        sem = asyncio.Semaphore(CONCURRENCY)
+
+        async def _fetch_window(w_from: date, w_to: date) -> list[Candle]:
             url = f"{EXODUS}/chartbit/{symbol}/price/intraday"
             params = build_intraday_params(w_from, w_to)
+            out: list[Candle] = []
             try:
-                async for d in self.transport.stream_json_array(url, params=params):
-                    c = map_candle_dict(d)
-                    if not c:
-                        continue
-                    key = int(c.ts.timestamp())
-                    if key in seen_ts:
-                        continue
-                    seen_ts.add(key)
-                    yield c
+                async with sem:
+                    async for d in self.transport.stream_json_array(url, params=params):
+                        c = map_candle_dict(d)
+                        if c:
+                            out.append(c)
             except Exception as e:
                 logger.warning(f"candle window {w_from}->{w_to} {resolution} failed: {e}")
+            return out
+
+        results = await asyncio.gather(*[_fetch_window(a, b) for a, b in windows])
+        seen_ts = set()
+        for batch in results:
+            for c in batch:
+                key = int(c.ts.timestamp())
+                if key in seen_ts:
+                    continue
+                seen_ts.add(key)
+                yield c
         return
 
     async def emitten_info(self, symbol: Symbol) -> dict[str, Any]:

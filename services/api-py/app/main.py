@@ -73,10 +73,23 @@ async def lifespan(app: FastAPI):
 
     consumer_task = None
     ingest_mode = os.getenv("INGEST_MODE", "embedded")
+
+    def _log_task_exit(name: str):
+        def _cb(task: asyncio.Task):
+            try:
+                exc = task.exception()
+            except asyncio.CancelledError:
+                return
+            if exc is not None:
+                logger.error(f"{name} died: {exc!r}", exc_info=exc)
+
+        return _cb
+
     if ingest_mode == "redis" and redis_url:
         from app.infra.bus import redis_consumer_task
 
         consumer_task = asyncio.create_task(redis_consumer_task(hub, redis_url))
+        consumer_task.add_done_callback(_log_task_exit("redis_consumer"))
         logger.info(f"redis consumer started for {redis_url}")
     elif ingest_mode == "embedded":
         # Launch embedded direct WebSocket feed
@@ -85,6 +98,7 @@ async def lifespan(app: FastAPI):
 
             prov = get_provider()
             consumer_task = asyncio.create_task(run_embedded_ingest(prov, hub))
+            consumer_task.add_done_callback(_log_task_exit("embedded_ingest"))
             logger.info("Embedded Stockbit WSS ingest task launched")
         except Exception as e:
             logger.warning(f"Could not launch embedded ingest: {e}")

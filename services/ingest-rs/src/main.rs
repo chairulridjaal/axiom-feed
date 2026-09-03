@@ -203,13 +203,28 @@ async fn run_loop(
                     match msg {
                         Some(Ok(Message::Binary(bin))) => {
                             if let Some(events) = decode::decode(&bin) {
+                                let ts = chrono::Utc::now().to_rfc3339();
+                                if events.len() > 1 && events[0].kind == "trade" {
+                                    let first_kind = events[0].kind.clone();
+                                    let symbol = events[0].symbol.clone();
+                                    if events.iter().all(|e| e.kind == first_kind) {
+                                        let payload = serde_json::json!({
+                                            "kind": format!("{}_batch", first_kind),
+                                            "symbol": symbol,
+                                            "payload": {"trades": events.iter().map(|e| serde_json::json!({"stock": e.symbol, "price": e.payload.get("price"), "volume": e.payload.get("volume"), "action": e.payload.get("action"), "board": e.payload.get("board"), "trade_number": e.payload.get("trade_number")})).collect::<Vec<_>>()},
+                                            "ts": ts,
+                                        });
+                                        hub.publish(payload.to_string());
+                                        continue;
+                                    }
+                                }
                                 for ev in events {
                                     if ev.kind == "ping" { continue; }
                                     let payload = serde_json::json!({
                                         "kind": ev.kind,
                                         "symbol": ev.symbol,
                                         "payload": ev.payload,
-                                        "ts": chrono::Utc::now().to_rfc3339(),
+                                        "ts": ts,
                                     });
                                     hub.publish(payload.to_string());
                                 }

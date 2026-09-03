@@ -205,6 +205,8 @@ def map_liveprice_to_quote(lp: Any) -> Quote:
 
 _TRADE_TYPE_MAP = {0: Side.UNKNOWN, 1: Side.BUY, 2: Side.SELL}
 _BOARD_TYPE_MAP = {0: Board.UNKNOWN, 1: Board.RG, 2: Board.TN, 3: Board.NG}
+_SIDE_VALUES = frozenset(s.value for s in Side)
+_BOARD_VALUES = frozenset(b.value for b in Board)
 
 
 def map_running_trade_to_domain(t: Any, seq: int = 0) -> Trade:
@@ -220,13 +222,11 @@ def map_running_trade_to_domain(t: Any, seq: int = 0) -> Trade:
     board = _g("market_board", 0)
     # action may be string already
     if isinstance(action, str):
-        side = Side(action.upper()) if action.upper() in (s.value for s in Side) else Side.UNKNOWN
+        side = Side(action.upper()) if action.upper() in _SIDE_VALUES else Side.UNKNOWN
     else:
         side = _TRADE_TYPE_MAP.get(int(action) if action is not None else 0, Side.UNKNOWN)
     if isinstance(board, str):
-        board_v = (
-            Board(board.upper()) if board.upper() in (b.value for b in Board) else Board.UNKNOWN
-        )
+        board_v = Board(board.upper()) if board.upper() in _BOARD_VALUES else Board.UNKNOWN
     else:
         board_v = _BOARD_TYPE_MAP.get(int(board) if board is not None else 0, Board.UNKNOWN)
 

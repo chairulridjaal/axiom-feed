@@ -88,17 +88,23 @@ class BoundedCache:
             return e.value
 
     def set(self, key: str, value: object, size: int, ttl_s: float | None = None):
+        if size > self.max_bytes:
+            return
         with self._lock:
             chosen_ttl = ttl_s if ttl_s is not None else ttl_for(key)
             if key in self._store:
                 self._bytes -= self._store[key].size
                 del self._store[key]
+            evicted = 0
             while (
                 len(self._store) >= self.max_keys or self._bytes + size > self.max_bytes
-            ) and self._store:
+            ) and self._store and evicted < 16:
                 _, old = self._store.popitem(last=False)
                 self._bytes -= old.size
                 self.evictions += 1
+                evicted += 1
+            if len(self._store) >= self.max_keys or self._bytes + size > self.max_bytes:
+                return
             self._store[key] = Entry(value, time.monotonic() + chosen_ttl, size)
             self._bytes += size
 

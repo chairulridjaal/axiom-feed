@@ -12,22 +12,39 @@ pub fn decompress(bytes: &[u8]) -> Vec<u8> {
     if bytes.is_empty() {
         return Vec::new();
     }
-    if let Ok(v) = try_deflate(bytes) {
-        if !v.is_empty() && v.len() > 8 {
-            return v;
+    // Header sniff: zlib streams start with 0x78 (deflate window bits).
+    // Single primary attempt + one fallback instead of triple-try.
+    let is_zlib = bytes.len() >= 2 && bytes[0] == 0x78;
+    if is_zlib {
+        if let Ok(v) = try_zlib(bytes) {
+            if !v.is_empty() && v.len() > 8 {
+                return v;
+            }
         }
-    }
-    let mut with_suffix = Vec::with_capacity(bytes.len() + 4);
-    with_suffix.extend_from_slice(bytes);
-    with_suffix.extend_from_slice(b"\x00\x00\xff\xff");
-    if let Ok(v) = try_deflate(&with_suffix) {
-        if !v.is_empty() && v.len() > 8 {
-            return v;
+        if let Ok(v) = try_deflate(bytes) {
+            if !v.is_empty() && v.len() > 8 {
+                return v;
+            }
         }
-    }
-    if let Ok(v) = try_zlib(bytes) {
-        if !v.is_empty() && v.len() > 8 {
-            return v;
+    } else {
+        if let Ok(v) = try_deflate(bytes) {
+            if !v.is_empty() && v.len() > 8 {
+                return v;
+            }
+        }
+        // Legacy suffix variant only when primary fails (truncated stream).
+        let mut with_suffix = Vec::with_capacity(bytes.len() + 4);
+        with_suffix.extend_from_slice(bytes);
+        with_suffix.extend_from_slice(b"\x00\x00\xff\xff");
+        if let Ok(v) = try_deflate(&with_suffix) {
+            if !v.is_empty() && v.len() > 8 {
+                return v;
+            }
+        }
+        if let Ok(v) = try_zlib(bytes) {
+            if !v.is_empty() && v.len() > 8 {
+                return v;
+            }
         }
     }
     bytes.to_vec()
@@ -35,14 +52,14 @@ pub fn decompress(bytes: &[u8]) -> Vec<u8> {
 
 fn try_zlib(d: &[u8]) -> Result<Vec<u8>, std::io::Error> {
     let mut dec = ZlibDecoder::new(d);
-    let mut out = Vec::with_capacity(d.len() * 3);
+    let mut out = Vec::with_capacity(d.len().saturating_mul(2).max(256));
     dec.read_to_end(&mut out)?;
     Ok(out)
 }
 
 fn try_deflate(d: &[u8]) -> Result<Vec<u8>, std::io::Error> {
     let mut dec = DeflateDecoder::new(d);
-    let mut out = Vec::with_capacity(d.len() * 3);
+    let mut out = Vec::with_capacity(d.len().saturating_mul(2).max(256));
     dec.read_to_end(&mut out)?;
     Ok(out)
 }
@@ -67,10 +84,10 @@ fn parse_pipe(body: &str) -> (Vec<Value>, Vec<Value>) {
     let mut bid_idx: Option<usize> = None;
     let mut offer_idx: Option<usize> = None;
     for (i, p) in parts.iter().enumerate() {
-        let u = p.trim().to_ascii_uppercase();
-        if u == "BID" {
+        let t = p.trim();
+        if t.eq_ignore_ascii_case("BID") {
             bid_idx = Some(i);
-        } else if u == "OFFER" || u == "ASK" {
+        } else if t.eq_ignore_ascii_case("OFFER") || t.eq_ignore_ascii_case("ASK") {
             offer_idx = Some(i);
         }
     }

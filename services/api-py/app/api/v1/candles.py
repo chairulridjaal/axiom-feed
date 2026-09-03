@@ -42,6 +42,14 @@ def init_candles(cache: BoundedCache, flight: Singleflight | None = None):
         cache_key = f"candles:{resolution}:{symbol.upper()}:{frm.isoformat()}:{to.isoformat()}"
         cached = cache.get(cache_key)
         if cached is not None:
+            if isinstance(cached, (bytes, bytearray)):
+
+                async def _from_bytes():
+                    yield bytes(cached)
+
+                return StreamingResponse(
+                    _from_bytes(), media_type="application/x-ndjson", headers={"X-Cache": "HIT"}
+                )
             cached_list: list[dict[str, Any]] = cached  # type: ignore[assignment]
 
             async def _from_cache():
@@ -56,7 +64,8 @@ def init_candles(cache: BoundedCache, flight: Singleflight | None = None):
         MAX_CACHE_CANDLES = 20000
         MAX_CACHE_BYTES = 5_000_000
 
-        async def _stream_direct():
+        async def _produce() -> bytes:
+            chunks: list[bytes] = []
             collected: list[dict[str, Any]] = []
             try:
                 async for c in provider.candles(symbol, frm, to, resolution):  # type: ignore[arg-type]
@@ -72,22 +81,43 @@ def init_candles(cache: BoundedCache, flight: Singleflight | None = None):
                     }
                     if len(collected) < MAX_CACHE_CANDLES:
                         collected.append(d)
-                    yield orjson.dumps(d) + b"\n"
-
-                if collected and len(collected) <= MAX_CACHE_CANDLES:
-                    try:
-                        raw_bytes = orjson.dumps(collected)
-                        if len(raw_bytes) <= MAX_CACHE_BYTES:
-                            cache.set(cache_key, collected, size=len(raw_bytes))
-                    except Exception:
-                        pass
+                    chunks.append(orjson.dumps(d) + b"\n")
             except Exception as e:
                 err_msg = str(e)
                 logger.error(f"candles stream failed {symbol} {frm}->{to} {resolution}: {err_msg}")
+                chunks.append(orjson.dumps({"error": err_msg}) + b"\n")
+                return b"".join(chunks)
+
+            if collected and len(collected) <= MAX_CACHE_CANDLES:
+                try:
+                    raw_bytes = orjson.dumps(collected)
+                    if len(raw_bytes) <= MAX_CACHE_BYTES:
+                        cache.set(cache_key, b"".join(chunks), size=len(raw_bytes))
+                except Exception:
+                    pass
+            return b"".join(chunks)
+
+        try:
+            body: bytes = await sf.do(cache_key, _produce)
+            skipped_cache = len(body) > MAX_CACHE_BYTES
+        except Exception as e:
+            err_msg = str(e)
+            logger.error(f"candles produce failed {symbol} {frm}->{to} {resolution}: {err_msg}")
+
+            async def _from_error():
                 yield orjson.dumps({"error": err_msg}) + b"\n"
 
+            return StreamingResponse(
+                _from_error(), media_type="application/x-ndjson", headers={"X-Cache": "MISS"}
+            )
+
+        async def _stream_replay():
+            yield body
+
         return StreamingResponse(
-            _stream_direct(), media_type="application/x-ndjson", headers={"X-Cache": "MISS"}
+            _stream_replay(),
+            media_type="application/x-ndjson",
+            headers={"X-Cache": "MISS" if not skipped_cache else "SKIP"},
         )
 
     return router
