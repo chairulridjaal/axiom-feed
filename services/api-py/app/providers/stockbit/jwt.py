@@ -44,16 +44,16 @@ def jwt_ttl_seconds(token: str) -> int | None:
 
 JWT_EXPIRED_MSG = (
     "Stockbit Bearer JWT expired (exp={exp} < now={now}). "
-    "Copy fresh token: DevTools → exodus.stockbit.com → Headers → Authorization: Bearer <token> "
-    "→ paste into STOCKBIT_BEARER_TOKEN in .env or refresh cookies.json and restart auto-refresh. "
+    "Copy fresh token: DevTools -> exodus.stockbit.com -> Headers -> Authorization: Bearer <token> "
+    "-> paste into STOCKBIT_BEARER_TOKEN in .env, or use STOCKBIT_REFRESH_TOKEN for automatic rotation. "
     "Previous exp={exp} ({exp_iso}), now={now} ({now_iso})."
 )
 
 COOKIES_STALE_MSG = (
     "Stockbit cookies stale or expired (401). Re-export cookies.json: "
-    "login at https://stockbit.com → DevTools → Application → Cookies "
-    "→ copy all cookies as JSON array → save to {path}. "
-    "Then refresh Bearer via DevTools → Network → exodus.stockbit.com → Authorization: Bearer."
+    "login at https://stockbit.com -> DevTools -> Application -> Cookies "
+    "-> copy all cookies as JSON array -> save to {path}. "
+    "Then refresh Bearer via DevTools -> Network -> exodus.stockbit.com -> Authorization: Bearer."
 )
 
 
@@ -62,7 +62,9 @@ class Credentials:
     user_id: str
     ws_key: str
     bearer_token: str
+    refresh_token: str | None = None
     exp: int | None = None
+    refresh_exp: int | None = None
 
     @property
     def ttl(self) -> int | None:
@@ -82,6 +84,30 @@ class Credentials:
             return False
         return (self.exp - time.time()) < 3600
 
+    @property
+    def refresh_ttl(self) -> int | None:
+        if self.refresh_exp is None:
+            return None
+        return int(self.refresh_exp - time.time())
+
+    @property
+    def is_refresh_expired(self) -> bool:
+        if self.refresh_exp is None:
+            return False
+        return time.time() >= self.refresh_exp
+
+    @property
+    def warn_soon_refresh(self) -> bool:
+        if self.refresh_exp is None:
+            return False
+        return (self.refresh_exp - time.time()) < 86400
+
 
 class AuthenticationError(RuntimeError):
+    pass
+
+
+class UpstreamAuthError(AuthenticationError):
+    """Raised when Stockbit upstream rejects credentials (401 Unauthorized)."""
+
     pass

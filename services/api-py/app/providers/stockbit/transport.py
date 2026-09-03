@@ -147,6 +147,19 @@ class HttpxTransport:
         await self.limiter.acquire()
         async with self.semaphore():
             resp = await self.client().get(url, params=params)
+            if resp.status_code == 401:
+                from app.providers.stockbit.auth import get_auth
+
+                auth = get_auth()
+                if auth and auth.refresh_token:
+                    try:
+                        logger.info(
+                            "401 received in get_json — attempting silent refresh via refresh_token"
+                        )
+                        await auth.refresh_tokens_via_stockbit()
+                        resp = await self.client().get(url, params=params)
+                    except Exception as e:
+                        logger.warning(f"On-demand refresh failed after 401: {e}")
             if resp.status_code == 429:
                 ra = resp.headers.get("Retry-After")
                 if ra:

@@ -41,6 +41,7 @@ async def lifespan(app: FastAPI):
     from app.providers.stockbit.transport import init_transport
 
     bearer = os.getenv("STOCKBIT_BEARER_TOKEN", "").strip().strip('"').strip("'")
+    refresh = os.getenv("STOCKBIT_REFRESH_TOKEN", "").strip().strip('"').strip("'")
     cookies_path = os.getenv("STOCKBIT_COOKIES_PATH", "./cookies.json")
     redis_url = os.getenv("REDIS_URL", "")
 
@@ -62,7 +63,12 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"provider init failed: {e}")
 
-    auth = init_auth(bearer_token=bearer, cookies_path=cookies_path, on_refresh=_on_refresh)
+    auth = init_auth(
+        bearer_token=bearer,
+        refresh_token=refresh,
+        cookies_path=cookies_path,
+        on_refresh=_on_refresh,
+    )
     auth.redis_url = redis_url
     global _auth_manager
     _auth_manager = auth

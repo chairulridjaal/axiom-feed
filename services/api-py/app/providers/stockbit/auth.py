@@ -13,11 +13,21 @@ from .jwt import (
     JWT_EXPIRED_MSG,
     AuthenticationError,
     Credentials,
+    UpstreamAuthError,
     decode_jwt_claims,
     jwt_exp,
     jwt_ttl_seconds,
 )
-from .manager import BEARER_ENV, EXODUS, AuthManager, fetch_credentials, get_auth, init_auth
+from .manager import (
+    BEARER_ENV,
+    EXODUS,
+    REFRESH_ENV,
+    AuthManager,
+    exchange_refresh_token,
+    fetch_credentials,
+    get_auth,
+    init_auth,
+)
 
 __all__ = [
     "AUTH_MODE",
@@ -25,8 +35,10 @@ __all__ = [
     "COOKIES_STALE_MSG",
     "JWT_EXPIRED_MSG",
     "BEARER_ENV",
+    "REFRESH_ENV",
     "EXODUS",
     "AuthenticationError",
+    "UpstreamAuthError",
     "Credentials",
     "_get_auth_mode",
     "_get_cookies_path",
@@ -34,6 +46,7 @@ __all__ = [
     "jwt_exp",
     "jwt_ttl_seconds",
     "load_cookies_array",
+    "exchange_refresh_token",
     "fetch_credentials",
     "AuthManager",
     "get_auth",
