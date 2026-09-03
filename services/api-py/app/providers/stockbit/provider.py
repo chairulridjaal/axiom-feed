@@ -109,7 +109,11 @@ class LiveFeedState:
                 for t in trades:
                     if isinstance(t, dict):
                         self.ingest_hub_event(
-                            {"kind": "trade", "symbol": t.get("stock") or event.get("symbol", ""), "payload": t}
+                            {
+                                "kind": "trade",
+                                "symbol": t.get("stock") or event.get("symbol", ""),
+                                "payload": t,
+                            }
                         )
                 return
             if kind not in ("quote", "book", "trade"):

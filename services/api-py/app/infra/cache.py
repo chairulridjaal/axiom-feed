@@ -97,8 +97,10 @@ class BoundedCache:
                 del self._store[key]
             evicted = 0
             while (
-                len(self._store) >= self.max_keys or self._bytes + size > self.max_bytes
-            ) and self._store and evicted < 16:
+                (len(self._store) >= self.max_keys or self._bytes + size > self.max_bytes)
+                and self._store
+                and evicted < 16
+            ):
                 _, old = self._store.popitem(last=False)
                 self._bytes -= old.size
                 self.evictions += 1
