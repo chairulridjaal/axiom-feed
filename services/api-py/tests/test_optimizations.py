@@ -166,3 +166,72 @@ async def test_daily_candles_multi_year_window_slicing():
     assert len(candles) == len(windows_called)
     for c in candles:
         assert c.open == Decimal("7500")
+
+
+def test_duckdb_parquet_archival_and_vwap():
+    from app.infra.archive import DuckDBArchive
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test_ticks.db"
+        parquet_dir = Path(tmpdir) / "parquet"
+        store = TickStore(db_path=db_path, max_records=100)
+
+        # Populate synthetic trades
+        trades = [
+            Trade(
+                symbol="BBCA",
+                price=Decimal("7500"),
+                volume=100,
+                side=Side.BUY,
+                board=Board.RG,
+                ts=datetime.now(),
+                seq=1001,
+            ),
+            Trade(
+                symbol="BBCA",
+                price=Decimal("7550"),
+                volume=200,
+                side=Side.BUY,
+                board=Board.RG,
+                ts=datetime.now(),
+                seq=1002,
+            ),
+            Trade(
+                symbol="BBCA",
+                price=Decimal("7450"),
+                volume=100,
+                side=Side.SELL,
+                board=Board.RG,
+                ts=datetime.now(),
+                seq=1003,
+            ),
+        ]
+        store.insert_batch(trades)
+        store.close()
+
+        archive = DuckDBArchive(db_path=db_path, parquet_dir=parquet_dir)
+
+        # 1. Test fast VWAP calculation
+        vwap_res = archive.calculate_vwap("BBCA")
+        assert vwap_res is not None
+        assert vwap_res["symbol"] == "BBCA"
+        assert vwap_res["trade_count"] == 3
+        assert vwap_res["total_volume"] == 400
+        # (7500*100 + 7550*200 + 7450*100) / 400 = (750000 + 1510000 + 745000) / 400 = 3005000 / 400 = 7512.50
+        assert vwap_res["vwap"] == "7512.50"
+        assert vwap_res["buy_volume"] == 300
+        assert vwap_res["sell_volume"] == 100
+
+        # 2. Test Flow stats
+        flow_res = archive.get_flow_stats("BBCA")
+        assert flow_res is not None
+        assert flow_res["buy_volume_pct"] == 75.0
+        assert flow_res["sell_volume_pct"] == 25.0
+        assert flow_res["flow_imbalance"] == 50.0
+
+        # 3. Test Parquet archival
+        arch_res = archive.archive_ticks_to_parquet(symbol="BBCA")
+        assert arch_res["status"] == "success"
+        assert arch_res["rows"] == 3
+        assert arch_res["file"] is not None
+        assert Path(arch_res["file"]).exists()

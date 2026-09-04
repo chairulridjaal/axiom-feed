@@ -17,6 +17,7 @@ dependencies = [
   "pytz>=2026.3.post1",
   "python-multipart>=0.0.32",
   "grpcio-tools>=1.83.1",
+  "duckdb>=1.5.5",
 ]
 
 [dependency-groups]

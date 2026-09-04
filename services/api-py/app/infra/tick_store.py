@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_DB_PATH = Path(os.getenv("TICKS_DB_PATH", "data/ticks.db"))
 DEFAULT_MAX_RECORDS = int(os.getenv("TICKS_MAX_RECORDS", "50000"))
+DEFAULT_BATCH_SIZE = int(os.getenv("TICKS_BATCH_SIZE", "50"))
 
 
 class TickStore:
@@ -31,9 +32,12 @@ class TickStore:
         self,
         db_path: Path | str | None = None,
         max_records: int = DEFAULT_MAX_RECORDS,
+        batch_size: int = DEFAULT_BATCH_SIZE,
     ) -> None:
         self.db_path = Path(db_path) if db_path is not None else DEFAULT_DB_PATH
         self.max_records = max_records
+        self._batch_size = batch_size
+        self._pending: list[Trade] = []
         self._lock = threading.Lock()
         self._con: sqlite3.Connection | None = None
         self._init_db()
@@ -82,37 +86,8 @@ class TickStore:
             logger.warning(f"Failed to initialize TickStore at {self.db_path}: {e}")
             self._con = None
 
-    def insert_trade(self, trade: Trade) -> None:
-        if self._con is None:
-            return
-        with self._lock:
-            try:
-                with self._con:
-                    self._con.execute(
-                        """
-                        INSERT OR IGNORE INTO trades (
-                            seq, symbol, price, volume, side, board, ts, change, change_pct
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            trade.seq,
-                            trade.symbol.upper(),
-                            str(trade.price),
-                            trade.volume,
-                            trade.side.value if hasattr(trade.side, "value") else str(trade.side),
-                            trade.board.value
-                            if hasattr(trade.board, "value")
-                            else str(trade.board),
-                            trade.ts.isoformat(),
-                            str(trade.change) if trade.change is not None else None,
-                            str(trade.change_pct) if trade.change_pct is not None else None,
-                        ),
-                    )
-            except Exception as e:
-                logger.debug(f"TickStore insert failed: {e}")
-
-    def insert_batch(self, trades: list[Trade]) -> None:
-        if self._con is None or not trades:
+    def _flush_locked(self) -> None:
+        if self._con is None or not self._pending:
             return
         rows = [
             (
@@ -126,26 +101,43 @@ class TickStore:
                 str(t.change) if t.change is not None else None,
                 str(t.change_pct) if t.change_pct is not None else None,
             )
-            for t in trades
+            for t in self._pending
         ]
+        self._pending.clear()
+        try:
+            with self._con:
+                self._con.executemany(
+                    """
+                    INSERT OR IGNORE INTO trades (
+                        seq, symbol, price, volume, side, board, ts, change, change_pct
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    rows,
+                )
+        except Exception as e:
+            logger.debug(f"TickStore flush failed: {e}")
+
+    def insert_trade(self, trade: Trade) -> None:
+        if self._con is None:
+            return
         with self._lock:
-            try:
-                with self._con:
-                    self._con.executemany(
-                        """
-                        INSERT OR IGNORE INTO trades (
-                            seq, symbol, price, volume, side, board, ts, change, change_pct
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        rows,
-                    )
-            except Exception as e:
-                logger.debug(f"TickStore insert_batch failed: {e}")
+            self._pending.append(trade)
+            if len(self._pending) >= self._batch_size:
+                self._flush_locked()
+
+    def insert_batch(self, trades: list[Trade]) -> None:
+        if self._con is None or not trades:
+            return
+        with self._lock:
+            self._pending.extend(trades)
+            if len(self._pending) >= self._batch_size:
+                self._flush_locked()
 
     def get_trades(self, symbol: str | None = None, limit: int = 50) -> list[Trade]:
         if self._con is None:
             return []
         with self._lock:
+            self._flush_locked()
             try:
                 if symbol:
                     cur = self._con.execute(
@@ -204,6 +196,7 @@ class TickStore:
         if self._con is None or self.max_records <= 0:
             return 0
         with self._lock:
+            self._flush_locked()
             try:
                 with self._con:
                     cur = self._con.execute(
@@ -226,6 +219,7 @@ class TickStore:
         if self._con is None:
             return 0
         with self._lock:
+            self._flush_locked()
             try:
                 cur = self._con.execute("SELECT COUNT(*) FROM trades")
                 row = cur.fetchone()
@@ -235,6 +229,7 @@ class TickStore:
 
     def close(self) -> None:
         with self._lock:
+            self._flush_locked()
             if self._con is not None:
                 try:
                     self._con.close()

@@ -50,6 +50,8 @@ pnpm-debug.log*
 *.sqlite3
 *.db
 *.zst
+*.parquet
+**/data/parquet/
 .codebase-memory/
 .codegraph/
 
