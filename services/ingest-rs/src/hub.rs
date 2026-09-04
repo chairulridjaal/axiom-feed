@@ -115,7 +115,6 @@ pub async fn publisher_task(_hub: Arc<Hub>) {
 }
 
 pub async fn direct_ipc_server_task(hub: Arc<Hub>, bind_addr: String) {
-    use tokio::io::AsyncWriteExt;
     use tokio::net::TcpListener;
 
     let listener = match TcpListener::bind(&bind_addr).await {
@@ -139,12 +138,67 @@ pub async fn direct_ipc_server_task(hub: Arc<Hub>, bind_addr: String) {
                 let _ = socket.set_nodelay(true);
                 let mut rx = hub.sender().subscribe();
                 tokio::spawn(async move {
+                    use tokio::io::AsyncWriteExt;
                     let (mut _reader, mut writer) = socket.split();
-                    while let Ok(msg) = rx.recv().await {
-                        let mut line = msg;
-                        line.push('\n');
-                        if writer.write_all(line.as_bytes()).await.is_err() {
-                            break;
+                    let mut buf = Vec::with_capacity(64 * 1024);
+                    let mut pending: usize = 0;
+                    // Batch up to 64 queued events per writev; flush on empty queue
+                    // or every 2 ms so p99 latency never waits for a full batch.
+                    let flush_every = tokio::time::Duration::from_millis(2);
+                    let mut last_flush = tokio::time::Instant::now();
+                    loop {
+                        match rx.try_recv() {
+                            Ok(msg) => {
+                                buf.extend_from_slice(msg.as_bytes());
+                                buf.push(b'\n');
+                                pending += 1;
+                                if pending >= 64 {
+                                    if writer.write_all(&buf).await.is_err() {
+                                        break;
+                                    }
+                                    buf.clear();
+                                    pending = 0;
+                                    last_flush = tokio::time::Instant::now();
+                                }
+                                continue;
+                            }
+                            Err(tokio::sync::broadcast::error::TryRecvError::Empty) => {}
+                            Err(_) => break,
+                        }
+                        if pending > 0 && last_flush.elapsed() >= flush_every {
+                            if writer.write_all(&buf).await.is_err() {
+                                break;
+                            }
+                            buf.clear();
+                            pending = 0;
+                            last_flush = tokio::time::Instant::now();
+                            continue;
+                        }
+                        match tokio::time::timeout(flush_every, rx.recv()).await {
+                            Ok(Ok(msg)) => {
+                                buf.extend_from_slice(msg.as_bytes());
+                                buf.push(b'\n');
+                                pending += 1;
+                                if pending >= 64 {
+                                    if writer.write_all(&buf).await.is_err() {
+                                        break;
+                                    }
+                                    buf.clear();
+                                    pending = 0;
+                                    last_flush = tokio::time::Instant::now();
+                                }
+                            }
+                            Ok(Err(_)) => break,
+                            Err(_) => {
+                                if pending > 0 {
+                                    if writer.write_all(&buf).await.is_err() {
+                                        break;
+                                    }
+                                    buf.clear();
+                                    pending = 0;
+                                    last_flush = tokio::time::Instant::now();
+                                }
+                            }
                         }
                     }
                     info!("direct IPC client disconnected {}", peer);

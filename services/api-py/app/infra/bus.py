@@ -18,19 +18,37 @@ CONSUMER_GROUP = "axiom-feed-api"
 CONSUMER_NAME = "api-py-1"
 
 
+def _preserialize(event: dict) -> None:
+    """Cache NDJSON text on the event once; skips dict copy when no private keys."""
+    if "_json_text" in event:
+        return
+    try:
+        if any(k.startswith("_") for k in event):
+            clean = {k: v for k, v in event.items() if not k.startswith("_")}
+        else:
+            clean = event
+        event["_json_text"] = orjson.dumps(clean, default=str).decode("utf-8")
+    except Exception:
+        pass
+
+
 async def _fanout_trade_batch(hub: Hub, evt: dict) -> None:
     payload = evt.get("payload") or {}
     trades = payload.get("trades") if isinstance(payload, dict) else None
     if not isinstance(trades, list):
         return
     ts = evt.get("ts")
+    batch: list[dict] = []
+    append = batch.append
     for t in trades:
         if not isinstance(t, dict):
             continue
         symbol = str(t.get("stock") or evt.get("symbol") or "").upper()
         if not symbol:
             continue
-        await hub.publish({"kind": "trade", "symbol": symbol, "payload": t, "ts": ts})
+        append({"kind": "trade", "symbol": symbol, "payload": t, "ts": ts})
+    if batch:
+        await hub.publish_batch(batch)
 
 
 class Hub:
@@ -63,28 +81,64 @@ class Hub:
         clients = self._client_list
         if not clients:
             return
-        if "_json_text" not in event:
-            try:
-                clean = {k: v for k, v in event.items() if not k.startswith("_")}
-                event["_json_text"] = orjson.dumps(clean, default=str).decode("utf-8")
-            except Exception:
-                pass
+        _preserialize(event)
+        dropped = 0
         for q in clients:
-            if q.full():
-                try:
-                    q.get_nowait()
-                    self.messages_dropped += 1
-                except Exception:
-                    pass
             try:
+                if q.full():
+                    q.get_nowait()
+                    dropped += 1
                 q.put_nowait(event)
-            except asyncio.QueueFull:
+            except (asyncio.QueueFull, asyncio.QueueEmpty):
                 try:
                     q.get_nowait()
                     q.put_nowait(event)
-                    self.messages_dropped += 1
-                except Exception:
+                    dropped += 1
+                except (asyncio.QueueFull, asyncio.QueueEmpty):
                     pass
+        self.messages_dropped += dropped
+
+    async def publish_batch(self, events: list[dict]):
+        """Fan out N events in one client pass; N loop iterations, not N*C serializations."""
+        n = len(events)
+        if n == 0:
+            return
+        clients = self._client_list
+        if not clients:
+            self.published += n
+            return
+        self.published += n
+        for e in events:
+            _preserialize(e)
+        dropped = 0
+        for q in clients:
+            space = self.queue_size - q.qsize()
+            if space >= n:
+                for e in events:
+                    try:
+                        q.put_nowait(e)
+                    except asyncio.QueueFull:
+                        try:
+                            q.get_nowait()
+                            q.put_nowait(e)
+                            dropped += 1
+                        except (asyncio.QueueFull, asyncio.QueueEmpty):
+                            pass
+            else:
+                # Slow consumer: evict the whole backlog once, keep only the newest window.
+                evict = q.qsize() + n - self.queue_size
+                for _ in range(evict):
+                    try:
+                        q.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+                dropped += max(evict, 0)
+                for e in events[-self.queue_size :]:
+                    try:
+                        q.put_nowait(e)
+                    except asyncio.QueueFull:
+                        break
+        self.messages_dropped += dropped
 
     def client_count(self) -> int:
         return len(self._clients)

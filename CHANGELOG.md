@@ -4,6 +4,15 @@ Use this file to track engineering chronology, operational actions, and empirica
 
 ---
 
+### 2026-09-04 22:40 WIB — perf-event-loop-offload-duckdb-attach-batch-fanout
+- **Objective**: Eliminate event-loop stalls from SQLite/DuckDB and cut fan-out cost under 500-client load.
+- **Context**: `TickStore.executemany` flushes ran synchronously on ingest callers (p50 216 µs, p95 319 µs per 50-row flush); `DuckDBArchive` paid `duckdb.connect(":memory:")` (~16 ms) per VWAP/flow/archive call plus full `sqlite_scan` re-parse (~92 ms on 2k rows); analytics routes ran synchronously so one VWAP stalled all 100 fan-out clients for ~90 ms; `Hub.publish` looped N×C for trade batches.
+- **Changes**: `TickStore` now drains via a dedicated daemon writer thread (`TICKS_FLUSH_INTERVAL="0.2"`, separate `_lock`/`_db_lock`, blocking `flush()` on reads, join on `close()`); `DuckDBArchive` reuses one connection with read-only SQLite `ATTACH` under `RLock` and bound parameters (no f-string symbols); analytics routes run via `asyncio.to_thread`; `Hub.publish_batch()` added (single client pass, bulk newest-window eviction) and embedded `running_trade_batch` uses it; Rust `direct_ipc_server_task` coalesces ≤64 events per TCP write with 2 ms max flush delay. New env `TICKS_FLUSH_INTERVAL` documented in `.env.example`, `README.md`, `docs/ARCHITECTURE.md`.
+- **Proof**: `cargo test` 9/9, `pytest` 37/37, `ruff check`/`format --check`/`pyright`/`cargo fmt --check`/`clippy -D warnings` green; `verify_contract.py` 18/18 PASS; `verify_all_endpoints.py` 36/36 PASS; `verify_live_upstream.py` 25/25 PASS. Warm VWAP (2k rows) 92.5 ms → 15.9 ms; batch fan-out per-event 500-client 201.7 µs → 156.0 µs (thr 5.0k → 6.4k ev/s); insert storm 2000 trades 4.8 ms wall with loop free; comprehensive_bench 500-client p50 272.9 µs → 157.1 µs, p99 501.3 µs → 214.2 µs, drops exact 75,000.
+- **State**: Operational.
+
+---
+
 ### 2026-09-04 07:58 WIB — perf-api-parallel-windowing-ndjson-streaming (8a03624)
 - **Objective**: Eliminate sequential multi-year historical candle query bottlenecks and reduce memory allocations during NDJSON streaming.
 - **Context**: Daily historical queries spanning >365d sequentially iterated over annual slices, accumulating network latency ($O(N \times \text{RTT})$). `_produce()` in `candles.py` built an intermediate list of heap `bytes` objects, while `financial_parser.py` allocated intermediate substring lists using `re.findall`.

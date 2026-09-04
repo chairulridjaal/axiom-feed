@@ -12,6 +12,7 @@ import logging
 import os
 import sqlite3
 import threading
+import time
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -23,6 +24,26 @@ logger = logging.getLogger(__name__)
 DEFAULT_DB_PATH = Path(os.getenv("TICKS_DB_PATH", "data/ticks.db"))
 DEFAULT_MAX_RECORDS = int(os.getenv("TICKS_MAX_RECORDS", "50000"))
 DEFAULT_BATCH_SIZE = int(os.getenv("TICKS_BATCH_SIZE", "50"))
+DEFAULT_FLUSH_INTERVAL = float(os.getenv("TICKS_FLUSH_INTERVAL", "0.2"))
+_INSERT_SQL = """
+                    INSERT OR IGNORE INTO trades (
+                        seq, symbol, price, volume, side, board, ts, change, change_pct
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """
+
+
+def _trade_to_row(t: Trade) -> tuple:
+    return (
+        t.seq,
+        t.symbol.upper(),
+        str(t.price),
+        t.volume,
+        t.side.value if hasattr(t.side, "value") else str(t.side),
+        t.board.value if hasattr(t.board, "value") else str(t.board),
+        t.ts.isoformat(),
+        str(t.change) if t.change is not None else None,
+        str(t.change_pct) if t.change_pct is not None else None,
+    )
 
 
 class TickStore:
@@ -33,14 +54,23 @@ class TickStore:
         db_path: Path | str | None = None,
         max_records: int = DEFAULT_MAX_RECORDS,
         batch_size: int = DEFAULT_BATCH_SIZE,
+        flush_interval: float = DEFAULT_FLUSH_INTERVAL,
     ) -> None:
         self.db_path = Path(db_path) if db_path is not None else DEFAULT_DB_PATH
         self.max_records = max_records
         self._batch_size = batch_size
+        self._flush_interval = flush_interval
         self._pending: list[Trade] = []
         self._lock = threading.Lock()
+        self._db_lock = threading.Lock()
+        self._flush_event = threading.Event()
+        self._closed = False
         self._con: sqlite3.Connection | None = None
         self._init_db()
+        self._writer = threading.Thread(
+            target=self._writer_loop, name="tickstore-writer", daemon=True
+        )
+        self._writer.start()
 
     def _init_db(self) -> None:
         try:
@@ -86,58 +116,73 @@ class TickStore:
             logger.warning(f"Failed to initialize TickStore at {self.db_path}: {e}")
             self._con = None
 
-    def _flush_locked(self) -> None:
-        if self._con is None or not self._pending:
-            return
-        rows = [
-            (
-                t.seq,
-                t.symbol.upper(),
-                str(t.price),
-                t.volume,
-                t.side.value if hasattr(t.side, "value") else str(t.side),
-                t.board.value if hasattr(t.board, "value") else str(t.board),
-                t.ts.isoformat(),
-                str(t.change) if t.change is not None else None,
-                str(t.change_pct) if t.change_pct is not None else None,
-            )
-            for t in self._pending
-        ]
-        self._pending.clear()
+    def _writer_loop(self) -> None:
+        """Dedicated writer: SQLite executemany runs here, never on the event loop."""
+        while True:
+            self._flush_event.wait(self._flush_interval)
+            self._flush_event.clear()
+            if self._closed:
+                self._drain_pending()
+                return
+            self._drain_pending()
+
+    def _drain_pending(self) -> None:
+        with self._lock:
+            if self._con is None or not self._pending:
+                return
+            rows = [_trade_to_row(t) for t in self._pending]
+            self._pending.clear()
         try:
-            with self._con:
-                self._con.executemany(
-                    """
-                    INSERT OR IGNORE INTO trades (
-                        seq, symbol, price, volume, side, board, ts, change, change_pct
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    rows,
-                )
+            with self._db_lock:
+                with self._con:
+                    self._con.executemany(_INSERT_SQL, rows)
         except Exception as e:
             logger.debug(f"TickStore flush failed: {e}")
+
+    def _flush_locked(self) -> None:
+        """Legacy entry: caller holds _lock; hand batch to writer without blocking."""
+        if self._con is None or not self._pending:
+            return
+        if len(self._pending) >= self._batch_size:
+            self._flush_event.set()
+
+    def flush(self, timeout: float = 5.0) -> None:
+        """Block until pending rows are durable. Reads call this for read-your-writes."""
+        deadline = timeout
+        self._flush_event.set()
+        while deadline > 0:
+            with self._lock:
+                empty = not self._pending
+            if empty:
+                return
+            time.sleep(0.005)
+            deadline -= 0.005
 
     def insert_trade(self, trade: Trade) -> None:
         if self._con is None:
             return
+        signal = False
         with self._lock:
             self._pending.append(trade)
-            if len(self._pending) >= self._batch_size:
-                self._flush_locked()
+            signal = len(self._pending) >= self._batch_size
+        if signal:
+            self._flush_event.set()
 
     def insert_batch(self, trades: list[Trade]) -> None:
         if self._con is None or not trades:
             return
+        signal = False
         with self._lock:
             self._pending.extend(trades)
-            if len(self._pending) >= self._batch_size:
-                self._flush_locked()
+            signal = len(self._pending) >= self._batch_size
+        if signal:
+            self._flush_event.set()
 
     def get_trades(self, symbol: str | None = None, limit: int = 50) -> list[Trade]:
         if self._con is None:
             return []
-        with self._lock:
-            self._flush_locked()
+        self.flush()
+        with self._db_lock:
             try:
                 if symbol:
                     cur = self._con.execute(
@@ -196,7 +241,10 @@ class TickStore:
         if self._con is None or self.max_records <= 0:
             return 0
         with self._lock:
-            self._flush_locked()
+            pending = bool(self._pending)
+        if pending:
+            self.flush()
+        with self._db_lock:
             try:
                 with self._con:
                     cur = self._con.execute(
@@ -219,7 +267,10 @@ class TickStore:
         if self._con is None:
             return 0
         with self._lock:
-            self._flush_locked()
+            pending = bool(self._pending)
+        if pending:
+            self.flush()
+        with self._db_lock:
             try:
                 cur = self._con.execute("SELECT COUNT(*) FROM trades")
                 row = cur.fetchone()
@@ -228,8 +279,13 @@ class TickStore:
                 return 0
 
     def close(self) -> None:
-        with self._lock:
-            self._flush_locked()
+        self._closed = True
+        self._flush_event.set()
+        try:
+            self._writer.join(timeout=5.0)
+        except Exception:
+            pass
+        with self._db_lock:
             if self._con is not None:
                 try:
                     self._con.close()

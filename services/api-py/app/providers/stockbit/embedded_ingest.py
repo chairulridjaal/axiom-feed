@@ -172,14 +172,15 @@ async def run_embedded_ingest(provider, hub):
                                     )
                                     continue
                                 if which == "running_trade_batch":
-                                    for t in wrapper.running_trade_batch.batch:
-                                        from app.providers.stockbit.mapping import (
-                                            map_running_trade_to_domain,
-                                        )
+                                    from app.providers.stockbit.mapping import (
+                                        map_running_trade_to_domain,
+                                    )
 
+                                    batch_events: list[dict] = []
+                                    for t in wrapper.running_trade_batch.batch:
                                         trade = map_running_trade_to_domain(t)
                                         provider.live_feed().ingest_trade(trade)
-                                        await hub.publish(
+                                        batch_events.append(
                                             {
                                                 "kind": "trade",
                                                 "symbol": trade.symbol,
@@ -196,6 +197,8 @@ async def run_embedded_ingest(provider, hub):
                                                 },
                                             }
                                         )
+                                    if batch_events:
+                                        await hub.publish_batch(batch_events)
                                 elif which == "running_trade":
                                     from app.providers.stockbit.mapping import (
                                         map_running_trade_to_domain,
