@@ -1165,3 +1165,94 @@ Retrieves live breaking news, corporate disclosures, and regulatory filings for 
 ```bash
 curl -s http://localhost:8000/v1/news/BBCA | jq .
 ```
+
+---
+
+## 22. Columnar Analytics & Parquet Archival (DuckDB)
+
+---
+
+### `GET /v1/analytics/vwap/{symbol}`
+Computes Volume Weighted Average Price (VWAP), total transaction value, turnover, price extremes, and buyer/seller execution volumes in sub-millisecond vectorized execution via embedded DuckDB over persistent tick logs.
+
+#### Parameters
+| Name | In | Type | Required | Default | Description |
+|---|---|---|---|---|---|
+| `symbol` | Path | `string` | **Yes** | — | Stock ticker (e.g. `BBCA`, `TLKM`) |
+
+#### Example Request
+```bash
+curl -s http://localhost:8000/v1/analytics/vwap/BBCA | jq .
+```
+
+#### Example Response (`200 OK`)
+```json
+{
+  "symbol": "BBCA",
+  "trade_count": 1420,
+  "total_volume": 520000,
+  "total_value": "3510000000.00",
+  "vwap": "6750.00",
+  "min_price": "6700.00",
+  "max_price": "6800.00",
+  "buy_volume": 320000,
+  "sell_volume": 200000,
+  "net_volume": 120000
+}
+```
+
+---
+
+### `GET /v1/analytics/flow/{symbol}`
+Calculates real-time buyer-initiated vs. seller-initiated order flow volume distribution and flow imbalance percentage.
+
+#### Parameters
+| Name | In | Type | Required | Default | Description |
+|---|---|---|---|---|---|
+| `symbol` | Path | `string` | **Yes** | — | Stock ticker (e.g. `BBCA`, `TLKM`) |
+
+#### Example Request
+```bash
+curl -s http://localhost:8000/v1/analytics/flow/BBCA | jq .
+```
+
+#### Example Response (`200 OK`)
+```json
+{
+  "symbol": "BBCA",
+  "trade_count": 1420,
+  "total_volume": 520000,
+  "buy_volume": 320000,
+  "sell_volume": 200000,
+  "buy_volume_pct": 61.54,
+  "sell_volume_pct": 38.46,
+  "flow_imbalance": 23.08,
+  "vwap": "6750.00"
+}
+```
+
+---
+
+### `POST /v1/analytics/archive`
+Flushes and exports stored SQLite trade executions into Snappy/ZSTD-compressed columnar Parquet partitions (`data/parquet/date=YYYY-MM-DD/{symbol}.parquet`) for long-term historical research, backtesting, and analytical queries.
+
+#### Parameters
+| Name | In | Type | Required | Default | Description |
+|---|---|---|---|---|---|
+| `symbol` | Query | `string` | No | `null` | Optional symbol filter (e.g. `BBCA`) |
+| `date` | Query | `string` | No | Today | Partition date (`YYYY-MM-DD`) |
+
+#### Example Request
+```bash
+curl -s -X POST "http://localhost:8000/v1/analytics/archive?symbol=BBCA" | jq .
+```
+
+#### Example Response (`200 OK`)
+```json
+{
+  "status": "success",
+  "rows": 1420,
+  "file": "data/parquet/date=2026-09-04/BBCA.parquet",
+  "date": "2026-09-04"
+}
+```

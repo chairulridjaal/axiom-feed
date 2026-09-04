@@ -223,6 +223,8 @@ class StockbitProvider:
             seen_ts: set[int] = set()
 
             if (to - frm).days > SLICE_DAILY:
+                import asyncio
+
                 windows: list[tuple[date, date]] = []
                 cur = frm
                 while cur <= to:
@@ -230,20 +232,30 @@ class StockbitProvider:
                     windows.append((cur, nxt))
                     cur = nxt + timedelta(days=1)
 
-                for w_frm, w_to in windows:
+                sem = asyncio.Semaphore(CONCURRENCY)
+
+                async def _fetch_daily_window(w_frm: date, w_to: date) -> list[Candle]:
                     url = f"{EXODUS}/chartbit/{symbol}/price/daily"
                     params = build_daily_params(w_frm, w_to)
+                    out: list[Candle] = []
                     try:
-                        async for d in self.transport.stream_json_array(url, params=params):
-                            c = map_candle_dict(d)
-                            if c:
-                                key = int(c.ts.timestamp())
-                                if key not in seen_ts:
-                                    seen_ts.add(key)
-                                    found_any = True
-                                    yield c
+                        async with sem:
+                            async for d in self.transport.stream_json_array(url, params=params):
+                                c = map_candle_dict(d)
+                                if c:
+                                    out.append(c)
                     except Exception as e:
                         logger.warning(f"daily candle window {w_frm}->{w_to} failed: {e}")
+                    return out
+
+                results = await asyncio.gather(*[_fetch_daily_window(a, b) for a, b in windows])
+                for batch in results:
+                    for c in batch:
+                        key = int(c.ts.timestamp())
+                        if key not in seen_ts:
+                            seen_ts.add(key)
+                            found_any = True
+                            yield c
             else:
                 # Fast-path: single window query
                 url = f"{EXODUS}/chartbit/{symbol}/price/daily"

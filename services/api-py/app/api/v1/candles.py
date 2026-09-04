@@ -65,8 +65,7 @@ def init_candles(cache: BoundedCache, flight: Singleflight | None = None):
         MAX_CACHE_BYTES = 5_000_000
 
         async def _produce() -> bytes:
-            chunks: list[bytes] = []
-            total_bytes = 0
+            buf = bytearray()
             count = 0
             try:
                 async for c in provider.candles(symbol, frm, to, resolution):  # type: ignore[arg-type]
@@ -80,20 +79,20 @@ def init_candles(cache: BoundedCache, flight: Singleflight | None = None):
                         "value": str(c.value),
                         "freq": c.freq,
                     }
-                    line = orjson.dumps(d) + b"\n"
-                    chunks.append(line)
-                    total_bytes += len(line)
+                    buf.extend(orjson.dumps(d))
+                    buf.append(10)  # \n
                     count += 1
             except Exception as e:
                 err_msg = str(e)
                 logger.error(f"candles stream failed {symbol} {frm}->{to} {resolution}: {err_msg}")
-                chunks.append(orjson.dumps({"error": err_msg}) + b"\n")
-                return b"".join(chunks)
+                buf.extend(orjson.dumps({"error": err_msg}))
+                buf.append(10)
+                return bytes(buf)
 
-            payload = b"".join(chunks)
-            if count > 0 and count <= MAX_CACHE_CANDLES and total_bytes <= MAX_CACHE_BYTES:
+            payload = bytes(buf)
+            if count > 0 and count <= MAX_CACHE_CANDLES and len(payload) <= MAX_CACHE_BYTES:
                 try:
-                    cache.set(cache_key, payload, size=total_bytes)
+                    cache.set(cache_key, payload, size=len(payload))
                 except Exception:
                     pass
             return payload

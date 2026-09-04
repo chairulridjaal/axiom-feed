@@ -46,17 +46,19 @@ def parse_financial_statement_html(html_report: str) -> dict[str, Any]:
     if not html_report:
         return {"periods": [], "line_items": []}
 
-    rows_match = _RE_ROW.findall(html_report)
-    if not rows_match:
+    rows: list[list[str]] = []
+    for r_match in _RE_ROW.finditer(html_report):
+        r_content = r_match.group(1)
+        cells = [
+            _RE_STRIP.sub("", c_match.group(1)).strip() for c_match in _RE_CELL.finditer(r_content)
+        ]
+        if cells:
+            rows.append(cells)
+
+    if not rows:
         parser = FinancialTableParser()
         parser.feed(html_report)
         rows = parser.rows
-    else:
-        rows = []
-        for r in rows_match:
-            cells = [_RE_STRIP.sub("", c).strip() for c in _RE_CELL.findall(r)]
-            if cells:
-                rows.append(cells)
 
     if not rows:
         return {"periods": [], "line_items": []}
