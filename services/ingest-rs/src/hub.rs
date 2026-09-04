@@ -113,3 +113,47 @@ pub async fn publisher_task(_hub: Arc<Hub>) {
     info!("in-memory hub publisher idle (use redis_publisher_task for Streams)");
     std::future::pending::<()>().await;
 }
+
+pub async fn direct_ipc_server_task(hub: Arc<Hub>, bind_addr: String) {
+    use tokio::io::AsyncWriteExt;
+    use tokio::net::TcpListener;
+
+    let listener = match TcpListener::bind(&bind_addr).await {
+        Ok(l) => {
+            info!("direct IPC server listening on {}", bind_addr);
+            l
+        }
+        Err(e) => {
+            warn!(
+                "direct IPC server bind failed on {}: {} — skipping direct IPC",
+                bind_addr, e
+            );
+            return;
+        }
+    };
+
+    loop {
+        match listener.accept().await {
+            Ok((mut socket, peer)) => {
+                info!("direct IPC client connected from {}", peer);
+                let _ = socket.set_nodelay(true);
+                let mut rx = hub.sender().subscribe();
+                tokio::spawn(async move {
+                    let (mut _reader, mut writer) = socket.split();
+                    while let Ok(msg) = rx.recv().await {
+                        let mut line = msg;
+                        line.push('\n');
+                        if writer.write_all(line.as_bytes()).await.is_err() {
+                            break;
+                        }
+                    }
+                    info!("direct IPC client disconnected {}", peer);
+                });
+            }
+            Err(e) => {
+                warn!("direct IPC accept error: {}", e);
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            }
+        }
+    }
+}

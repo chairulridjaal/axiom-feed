@@ -26,21 +26,63 @@ fn compress_zlib(data: &[u8]) -> Vec<u8> {
     encoder.finish().unwrap()
 }
 
-fn try_zlib(d: &[u8]) -> Result<Vec<u8>, std::io::Error> {
+fn try_deflate_into(d: &[u8], out: &mut Vec<u8>) -> Result<(), std::io::Error> {
+    use flate2::read::DeflateDecoder;
+    use std::io::Read;
+    out.clear();
+    let mut dec = DeflateDecoder::new(d);
+    dec.read_to_end(out)?;
+    Ok(())
+}
+
+fn try_zlib_into(d: &[u8], out: &mut Vec<u8>) -> Result<(), std::io::Error> {
     use flate2::read::ZlibDecoder;
     use std::io::Read;
+    out.clear();
     let mut dec = ZlibDecoder::new(d);
+    dec.read_to_end(out)?;
+    Ok(())
+}
+
+pub fn decompress_scratch<'a>(bytes: &'a [u8], out: &'a mut Vec<u8>) -> &'a [u8] {
+    out.clear();
+    if bytes.is_empty() {
+        return &[];
+    }
+    let is_zlib = bytes.len() >= 2 && bytes[0] == 0x78;
+    if is_zlib {
+        if try_zlib_into(bytes, out).is_ok() && out.len() > 8 {
+            return out.as_slice();
+        }
+        if try_deflate_into(bytes, out).is_ok() && out.len() > 8 {
+            return out.as_slice();
+        }
+    } else {
+        if try_deflate_into(bytes, out).is_ok() && out.len() > 8 {
+            return out.as_slice();
+        }
+        let mut with_suffix = Vec::with_capacity(bytes.len() + 4);
+        with_suffix.extend_from_slice(bytes);
+        with_suffix.extend_from_slice(b"\x00\x00\xff\xff");
+        if try_deflate_into(&with_suffix, out).is_ok() && out.len() > 8 {
+            return out.as_slice();
+        }
+        if try_zlib_into(bytes, out).is_ok() && out.len() > 8 {
+            return out.as_slice();
+        }
+    }
+    bytes
+}
+
+fn try_zlib(d: &[u8]) -> Result<Vec<u8>, std::io::Error> {
     let mut out = Vec::with_capacity(d.len().saturating_mul(4).max(512));
-    dec.read_to_end(&mut out)?;
+    try_zlib_into(d, &mut out)?;
     Ok(out)
 }
 
 fn try_deflate(d: &[u8]) -> Result<Vec<u8>, std::io::Error> {
-    use flate2::read::DeflateDecoder;
-    use std::io::Read;
-    let mut dec = DeflateDecoder::new(d);
     let mut out = Vec::with_capacity(d.len().saturating_mul(4).max(512));
-    dec.read_to_end(&mut out)?;
+    try_deflate_into(d, &mut out)?;
     Ok(out)
 }
 
@@ -261,7 +303,7 @@ async fn main() {
     let ob_body_wire = create_sample_orderbook_body();
     let ob_pipe_wire = create_sample_orderbook_pipe();
 
-    // Measure Decompress
+    // Measure Decompress on raw deflate (baseline)
     let mut decompress_durations = Vec::with_capacity(10000);
     for _ in 0..10000 {
         let t0 = Instant::now();
@@ -269,6 +311,16 @@ async fn main() {
         decompress_durations.push(t0.elapsed().as_secs_f64() * 1_000_000.0); // us
     }
     decompress_durations.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+    // Measure Optimized Zero-Allocation Decompress
+    let mut opt_decompress_durations = Vec::with_capacity(10000);
+    let mut scratch = Vec::with_capacity(16384);
+    for _ in 0..10000 {
+        let t0 = Instant::now();
+        let _ = decompress_scratch(&trade_batch_wire, &mut scratch);
+        opt_decompress_durations.push(t0.elapsed().as_secs_f64() * 1_000_000.0);
+    }
+    opt_decompress_durations.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
     // Measure Decompress on zlib-wrapped input (header sniff should route
     // straight to zlib; the old triple-try order burned two deflate attempts).
@@ -312,6 +364,15 @@ async fn main() {
         percentile(&decompress_durations, 99.0),
         decompress_durations[0],
         decompress_durations[decompress_durations.len() - 1]
+    );
+
+    println!(
+        "Decompress (optimized scratch buffer):        p50={:.2}us, p95={:.2}us, p99={:.2}us, min={:.2}us, max={:.2}us",
+        percentile(&opt_decompress_durations, 50.0),
+        percentile(&opt_decompress_durations, 95.0),
+        percentile(&opt_decompress_durations, 99.0),
+        opt_decompress_durations[0],
+        opt_decompress_durations[opt_decompress_durations.len() - 1]
     );
 
     println!(
@@ -368,6 +429,7 @@ async fn main() {
 
         let mut last_send = Instant::now();
         let bench_start = Instant::now();
+        let mut pipe_scratch = Vec::with_capacity(16384);
 
         for i in 0..total_events {
             let t0 = Instant::now();
@@ -377,11 +439,12 @@ async fn main() {
             last_send = t0;
 
             // Full pipeline execution as in decode.rs + hub.rs
-            let decompressed = decompress_baseline(&payload);
-            if let Ok(msg) = WebsocketWrapMessageChannel::decode(decompressed.as_slice()) {
+            let decompressed = decompress_scratch(&payload, &mut pipe_scratch);
+            if let Ok(msg) = WebsocketWrapMessageChannel::decode(decompressed) {
                 if let Some(websocket_wrap_message_channel::MessageChannel::RunningTradeBatch(b)) =
                     msg.message_channel
                 {
+                    let ts = chrono::Utc::now().to_rfc3339();
                     for t in b.batch {
                         let p = serde_json::json!({
                             "kind": "trade",
@@ -394,7 +457,7 @@ async fn main() {
                                 "board": t.market_board,
                                 "trade_number": t.trade_number,
                             },
-                            "ts": chrono::Utc::now().to_rfc3339(),
+                            "ts": ts,
                         });
                         let _ = tx_clone.send(p.to_string());
                     }
@@ -404,11 +467,17 @@ async fn main() {
             let elapsed_us = t0.elapsed().as_secs_f64() * 1_000_000.0;
             latencies_us.push(elapsed_us);
 
-            // Rate pacing
+            // High-precision rate pacing
             let target_time = bench_start + interval * (i as u32 + 1);
             let now = Instant::now();
             if target_time > now {
-                tokio::time::sleep(target_time - now).await;
+                let diff = target_time - now;
+                if diff > Duration::from_millis(2) {
+                    tokio::time::sleep(diff - Duration::from_millis(1)).await;
+                }
+                while Instant::now() < target_time {
+                    std::hint::spin_loop();
+                }
             }
         }
 

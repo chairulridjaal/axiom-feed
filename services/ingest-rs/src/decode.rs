@@ -4,50 +4,80 @@
 use flate2::read::{DeflateDecoder, ZlibDecoder};
 use prost::Message;
 use serde_json::Value;
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::io::Read;
 
 include!(concat!(env!("OUT_DIR"), "/stockbit.datafeed.v1.rs"));
 
-pub fn decompress(bytes: &[u8]) -> Vec<u8> {
+#[derive(Clone, Default)]
+struct BookDepthState {
+    bids: Vec<(i64, i64)>,
+    offers: Vec<(i64, i64)>,
+    count: u32,
+}
+
+thread_local! {
+    static DECODE_SCRATCH: RefCell<Vec<u8>> = RefCell::new(Vec::with_capacity(16384));
+    static DEPTH_TRACKER: RefCell<HashMap<String, BookDepthState>> = RefCell::new(HashMap::new());
+}
+
+/// Decompress bytes into a reusable buffer, avoiding allocations in steady state.
+pub fn decompress_into(bytes: &[u8], out: &mut Vec<u8>) -> bool {
+    out.clear();
     if bytes.is_empty() {
-        return Vec::new();
+        return false;
     }
     // Header sniff: zlib streams start with 0x78 (deflate window bits).
-    // Single primary attempt + one fallback instead of triple-try.
     let is_zlib = bytes.len() >= 2 && bytes[0] == 0x78;
     if is_zlib {
-        if let Ok(v) = try_zlib(bytes) {
-            if !v.is_empty() && v.len() > 8 {
-                return v;
-            }
+        if try_zlib_into(bytes, out).is_ok() && out.len() > 8 {
+            return true;
         }
-        if let Ok(v) = try_deflate(bytes) {
-            if !v.is_empty() && v.len() > 8 {
-                return v;
-            }
+        if try_deflate_into(bytes, out).is_ok() && out.len() > 8 {
+            return true;
         }
     } else {
-        if let Ok(v) = try_deflate(bytes) {
-            if !v.is_empty() && v.len() > 8 {
-                return v;
-            }
+        if try_deflate_into(bytes, out).is_ok() && out.len() > 8 {
+            return true;
         }
         // Legacy suffix variant only when primary fails (truncated stream).
         let mut with_suffix = Vec::with_capacity(bytes.len() + 4);
         with_suffix.extend_from_slice(bytes);
         with_suffix.extend_from_slice(b"\x00\x00\xff\xff");
-        if let Ok(v) = try_deflate(&with_suffix) {
-            if !v.is_empty() && v.len() > 8 {
-                return v;
-            }
+        if try_deflate_into(&with_suffix, out).is_ok() && out.len() > 8 {
+            return true;
         }
-        if let Ok(v) = try_zlib(bytes) {
-            if !v.is_empty() && v.len() > 8 {
-                return v;
-            }
+        if try_zlib_into(bytes, out).is_ok() && out.len() > 8 {
+            return true;
         }
     }
-    bytes.to_vec()
+    out.clear();
+    out.extend_from_slice(bytes);
+    true
+}
+
+pub fn decompress(bytes: &[u8]) -> Vec<u8> {
+    if bytes.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::with_capacity(bytes.len().saturating_mul(4).max(2048));
+    decompress_into(bytes, &mut out);
+    out
+}
+
+fn try_zlib_into(d: &[u8], out: &mut Vec<u8>) -> Result<(), std::io::Error> {
+    out.clear();
+    let mut dec = ZlibDecoder::new(d);
+    dec.read_to_end(out)?;
+    Ok(())
+}
+
+fn try_deflate_into(d: &[u8], out: &mut Vec<u8>) -> Result<(), std::io::Error> {
+    out.clear();
+    let mut dec = DeflateDecoder::new(d);
+    dec.read_to_end(out)?;
+    Ok(())
 }
 
 fn try_zlib(d: &[u8]) -> Result<Vec<u8>, std::io::Error> {
@@ -69,6 +99,27 @@ pub struct NormalizedEvent {
     pub kind: String,
     pub symbol: String,
     pub payload: Value,
+}
+
+#[derive(serde::Serialize)]
+struct EventEnvelope<'a> {
+    kind: &'a str,
+    symbol: &'a str,
+    payload: &'a Value,
+    ts: &'a str,
+}
+
+impl NormalizedEvent {
+    #[inline]
+    pub fn to_json_string(&self, ts: &str) -> String {
+        serde_json::to_string(&EventEnvelope {
+            kind: &self.kind,
+            symbol: &self.symbol,
+            payload: &self.payload,
+            ts,
+        })
+        .unwrap_or_default()
+    }
 }
 
 pub fn parse_pipe(body: &str) -> (Vec<Value>, Vec<Value>) {
@@ -110,14 +161,18 @@ pub fn parse_pipe(body: &str) -> (Vec<Value>, Vec<Value>) {
 
 pub fn decode(bytes: &[u8]) -> Option<Vec<NormalizedEvent>> {
     use websocket_wrap_message_channel::MessageChannel;
-    let data = decompress(bytes);
-    if data.is_empty() {
+    if bytes.is_empty() {
         return None;
     }
-    let msg = WebsocketWrapMessageChannel::decode(data.as_slice()).ok()?;
-    let which = msg.message_channel?;
-    let mut out = Vec::with_capacity(1);
-    match which {
+    DECODE_SCRATCH.with(|cell| {
+        let mut buf = cell.borrow_mut();
+        if !decompress_into(bytes, &mut buf) || buf.is_empty() {
+            return None;
+        }
+        let msg = WebsocketWrapMessageChannel::decode(buf.as_slice()).ok()?;
+        let which = msg.message_channel?;
+        let mut out = Vec::with_capacity(1);
+        match which {
         MessageChannel::RunningTrade(t) => {
             out.push(NormalizedEvent {
                 kind: "trade".into(),
@@ -181,21 +236,63 @@ pub fn decode(bytes: &[u8]) -> Option<Vec<NormalizedEvent>> {
             });
         }
         MessageChannel::OrderbookBody(ob) => {
-            let bids: Vec<Value> = ob
-                .bid
-                .iter()
-                .map(|b| serde_json::json!({"price": b.price, "lot": b.lot}))
-                .collect();
-            let offers: Vec<Value> = ob
-                .offer
-                .iter()
-                .map(|o| serde_json::json!({"price": o.price, "lot": o.lot}))
-                .collect();
+            let sym = ob.stock_symbol.clone();
+            let raw_bids: Vec<(i64, i64)> = ob.bid.iter().map(|b| (b.price as i64, b.lot as i64)).collect();
+            let raw_offers: Vec<(i64, i64)> = ob.offer.iter().map(|o| (o.price as i64, o.lot as i64)).collect();
+
+            let (emit_bids, emit_offers) = DEPTH_TRACKER.with(|tracker| {
+                let mut map = tracker.borrow_mut();
+                if let Some(state) = map.get_mut(&sym) {
+                    state.count += 1;
+                    if state.count < 20 {
+                        let bids_same = state.bids == raw_bids;
+                        let offers_same = state.offers == raw_offers;
+                        if bids_same && !offers_same {
+                            state.offers = raw_offers;
+                            return (false, true);
+                        } else if offers_same && !bids_same {
+                            state.bids = raw_bids;
+                            return (true, false);
+                        }
+                    }
+                    state.bids = raw_bids;
+                    state.offers = raw_offers;
+                    state.count = 0;
+                    (true, true)
+                } else {
+                    map.insert(
+                        sym.clone(),
+                        BookDepthState {
+                            bids: raw_bids,
+                            offers: raw_offers,
+                            count: 0,
+                        },
+                    );
+                    (true, true)
+                }
+            });
+
+            let bids: Vec<Value> = if emit_bids {
+                ob.bid
+                    .iter()
+                    .map(|b| serde_json::json!({"price": b.price, "lot": b.lot}))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let offers: Vec<Value> = if emit_offers {
+                ob.offer
+                    .iter()
+                    .map(|o| serde_json::json!({"price": o.price, "lot": o.lot}))
+                    .collect()
+            } else {
+                Vec::new()
+            };
             out.push(NormalizedEvent {
                 kind: "book".into(),
-                symbol: ob.stock_symbol.clone(),
+                symbol: sym.clone(),
                 payload: serde_json::json!({
-                    "stock": ob.stock_symbol,
+                    "stock": sym,
                     "bids": bids,
                     "offers": offers,
                     "time": ob.time.map(|t| t.seconds),
@@ -236,6 +333,7 @@ pub fn decode(bytes: &[u8]) -> Option<Vec<NormalizedEvent>> {
     } else {
         Some(out)
     }
+})
 }
 
 #[cfg(test)]
