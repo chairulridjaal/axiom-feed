@@ -121,11 +121,24 @@ async def main():
     refresh_token = None
     deadline = time.time() + 300
 
+    def _recv_until(ws, want_id: int, timeout: float = 15):
+        """Wait for a CDP response id without hanging forever."""
+        end = time.time() + timeout
+        while time.time() < end:
+            try:
+                m = json.loads(ws.recv())
+            except Exception:
+                continue
+            if m.get("id") == want_id:
+                return m
+        return None
+
     while time.time() < deadline:
         try:
             m = json.loads(ws.recv())
         except Exception:
-            break
+            # Idle periods raise recv timeouts — keep listening until deadline.
+            continue
 
         method = m.get("method", "")
         if method == "Network.requestWillBeSent":
@@ -142,8 +155,15 @@ async def main():
         elif method == "Network.responseReceived":
             res = m.get("params", {}).get("response", {})
             url = res.get("url", "")
-            if "login" in url or "auth" in url or "token" in url:
-                req_id = m.get("params", {}).get("requestId")
+            mime = res.get("mimeType", "")
+            # Scan every JSON response body on any host for a credential mint.
+            # The mint endpoint is not guaranteed to live on exodus or to carry
+            # a keyword in its URL — host/keyword filters are how captures
+            # silently miss while the Bearer (sent on request headers) is found.
+            if "json" not in mime:
+                continue
+            req_id = m.get("params", {}).get("requestId")
+            try:
                 ws.send(
                     json.dumps(
                         {
@@ -153,23 +173,20 @@ async def main():
                         }
                     )
                 )
-                while True:
-                    m2 = json.loads(ws.recv())
-                    if m2.get("id") == 2:
-                        body = m2.get("result", {}).get("body", "")
-                        try:
-                            d = json.loads(body).get("data", {})
-                            acc = d.get("access", {}).get("token")
-                            ref = d.get("refresh", {}).get("token")
-                            if acc:
-                                access_token = acc
-                                print("Found Bearer token from login response!")
-                            if ref:
-                                refresh_token = ref
-                                print("Found 7-day Refresh token!")
-                        except Exception:
-                            pass
-                        break
+                m2 = _recv_until(ws, 2)
+                if not m2:
+                    continue
+                body = m2.get("result", {}).get("body", "")
+                acc = re.search(r'"access"\s*:\s*\{\s*"token"\s*:\s*"([^"]+)"', body)
+                ref = re.search(r'"refresh"\s*:\s*\{\s*"token"\s*:\s*"([^"]+)"', body)
+                if acc:
+                    access_token = acc.group(1)
+                    print("Found Bearer token from login response!")
+                if ref:
+                    refresh_token = ref.group(1)
+                    print("Found 7-day Refresh token!")
+            except Exception:
+                pass
 
         if access_token and refresh_token:
             break
@@ -187,19 +204,23 @@ async def main():
                 }
             )
         )
-        while True:
-            m3 = json.loads(ws.recv())
-            if m3.get("id") == 3:
-                cookies_list = m3.get("result", {}).get("cookies", [])
-                if cookies_list:
-                    cookies_path = Path("cookies.json")
-                    cookies_path.write_text(
-                        json.dumps(cookies_list, indent=2), encoding="utf-8"
-                    )
-                    print(
-                        f"Exported {len(cookies_list)} session cookies to {cookies_path.resolve()}!"
-                    )
-                break
+        m3 = _recv_until(ws, 3)
+        if m3:
+            cookies_list = m3.get("result", {}).get("cookies", [])
+            if cookies_list:
+                # Canonical location: next to the .env being updated, so the
+                # server finds one pair regardless of its working directory.
+                try:
+                    env_dir = _find_env().parent
+                except Exception:
+                    env_dir = Path(".")
+                cookies_path = env_dir / "cookies.json"
+                cookies_path.write_text(
+                    json.dumps(cookies_list, indent=2), encoding="utf-8"
+                )
+                print(
+                    f"Exported {len(cookies_list)} session cookies to {cookies_path.resolve()}!"
+                )
     except Exception:
         pass
 

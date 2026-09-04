@@ -4,6 +4,22 @@ Use this file to track engineering chronology, operational actions, and empirica
 
 ---
 
+### 2026-09-05 WIB — fix-auth-single-use-rotation
+- **Objective**: Make silent refresh survive Stockbit's single-use refresh-token rotation across processes and login-script runs.
+- **Context**: Stored refresh token 401'd despite 7-day JWT validity — bearer iat lagged refresh iat by 14 min, proving the stored token was already spent server-side (rotation retires on every use). Gaps: no adopt-before-spend, `_find_env_file` fallback pointed at `services/.env` (parents[4], should be parents[5]), transport retried with stale client headers when no lifespan callback wired.
+- **Changes**: `refresh_tokens_via_stockbit` re-reads `.env` under lock and adopts newer file tokens before spending; fixed env fallback to repo root; `get_json`/`post_json` call `update_bearer` directly after on-demand refresh. Tests: 2 new cases (adopt-newer, hot-swap) in `tests/test_auth_rotation.py`.
+- **Proof**: `pytest` 44/44, `ruff check` + `format --check` clean. Live proof 2026-09-05: fresh 7-day refresh token (168h) rotated twice in a row — new 24h bearer verified upstream (`user_id 579640`), rotated pair persisted to `.env`, second rotation with the new refresh token also minted a fresh bearer. Chain rotation works. (Redis publish warnings benign — no local Redis.)
+- **State**: Operational.
+
+---
+
+### 2026-09-05 WIB — feat-upstream-route-expansion
+- **Objective**: Expand upstream route coverage with 10 verified market-data endpoints, and fix silently-dropped filter params on existing broker endpoints.
+- **Context**: `broker_summary`/`brokers_top`/`top-stocks`/`broker_activity` routers advertised filter params but the provider hardcoded NET/REGULER/ALL (axiom-mcp hard-rejects non-defaults because of this); `trade_book` sent legacy `GROUP_BY_PRICE` while upstream requires numeric `group_by`; `broker_distribution` always sent `date`+`period` together so explicit ranges were silently ignored.
+- **Changes**: 10 new provider methods + 10 REST routes (market session, order queue, intraday price/brokers, index members, peer multiples, corpaction status/day, earnings recap, underwriter performance). Fixes: numeric `group_by="1"`, `period`-vs-`from`/`to` exclusivity on summary + distribution, full filter pass-through on all broker routes. `/earnings` vocabulary settled live (`sort_column` + `order` required, `filter` rejected). Docs: `docs/ENDPOINTS.md` §§23–25, README surface table. Tests: 5 new mocked cases in `tests/test_discovered_endpoints.py`.
+- **Proof**: `pytest` 44/44, `ruff check` + `format --check` clean; live `scripts/verify_new_endpoints.py` 15/15 OK after fresh login 2026-09-05.
+- **State**: Operational.
+
 ### 2026-09-04 22:40 WIB — perf-event-loop-offload-duckdb-attach-batch-fanout
 - **Objective**: Eliminate event-loop stalls from SQLite/DuckDB and cut fan-out cost under 500-client load.
 - **Context**: `TickStore.executemany` flushes ran synchronously on ingest callers (p50 216 µs, p95 319 µs per 50-row flush); `DuckDBArchive` paid `duckdb.connect(":memory:")` (~16 ms) per VWAP/flow/archive call plus full `sqlite_scan` re-parse (~92 ms on 2k rows); analytics routes ran synchronously so one VWAP stalled all 100 fan-out clients for ~90 ms; `Hub.publish` looped N×C for trade batches.

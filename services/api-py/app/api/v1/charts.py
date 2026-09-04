@@ -10,7 +10,7 @@ router = APIRouter(dependencies=[Depends(verify_api_key)], tags=["Charts"])
 async def tradebook(symbol: str = Query(...), interval: str = Query("1m")):
     prov = get_provider()
     try:
-        data = await prov.trade_book(symbol, interval=interval, group_by="GROUP_BY_PRICE")
+        data = await prov.trade_book(symbol, interval=interval, group_by="1")
     except Exception as e:
         raise HTTPException(502, str(e))
     return {"symbol": symbol.upper(), "interval": interval, "data": data}

@@ -13,16 +13,27 @@ async def broker_summary(
     symbol: str,
     frm: str = Query(None, alias="from"),
     to: str = Query(None, alias="to"),
+    period: str = Query(
+        None,
+        description="Native upstream aggregation window (e.g. BROKER_SUMMARY_PERIOD_YEAR_TO_DATE, BROKER_SUMMARY_PERIOD_LAST_7_DAYS). Mutually exclusive with from/to — when set, dates are omitted (upstream silently ignores dates when period is present).",
+    ),
     transaction_type: str = Query("TRANSACTION_TYPE_NET"),
     market_board: str = Query("MARKET_BOARD_REGULER"),
     investor_type: str = Query("INVESTOR_TYPE_ALL"),
     limit: int = Query(100),
 ):
     p = get_provider()
-    frm = frm or dt.datetime.now().strftime("%Y-%m-%d")
-    to = to or frm
     try:
-        data = await p.broker_summary(symbol, frm=frm, to=to)
+        data = await p.broker_summary(
+            symbol,
+            frm=frm,
+            to=to,
+            period=period,
+            transaction_type=transaction_type,
+            market_board=market_board,
+            investor_type=investor_type,
+            limit=limit,
+        )
         return {"symbol": symbol.upper(), "data": data}
     except Exception as e:
         raise HTTPException(502, f"Broker summary failed: {e}")
@@ -37,10 +48,8 @@ async def brokers_top(
     market_type: str = Query("MARKET_TYPE_ALL"),
 ):
     p = get_provider()
-    frm = frm or dt.datetime.now().strftime("%Y-%m-%d")
-    to = to or frm
     try:
-        data = await p.brokers_top(frm, to)
+        data = await p.brokers_top(frm, to, sort=sort, order=order, market_type=market_type)
         return {"brokers": data}
     except Exception as e:
         raise HTTPException(502, f"Broker top failed: {e}")
@@ -56,12 +65,21 @@ async def brokers_top_stocks(
     market_type: str = Query("MARKET_TYPE_REGULER"),
     value_type: str = Query("VALUE_TYPE_NET"),
     page: int = Query(1),
+    limit: int = Query(25, ge=1, le=100),
 ):
     p = get_provider()
     s = start or frm or dt.datetime.now().strftime("%Y-%m-%d")
     e = end or to or s
     try:
-        data = await p.brokers_top_stocks(s, e)
+        data = await p.brokers_top_stocks(
+            s,
+            e,
+            investor_type=investor_type,
+            market_type=market_type,
+            value_type=value_type,
+            page=page,
+            limit=limit,
+        )
         return {"stocks": data}
     except Exception as e:
         raise HTTPException(502, f"Broker top-stocks failed: {e}")
@@ -79,10 +97,17 @@ async def broker_activity(
     investor_type: str = Query("INVESTOR_TYPE_ALL"),
 ):
     p = get_provider()
-    frm = frm or dt.datetime.now().strftime("%Y-%m-%d")
-    to = to or frm
     try:
-        data = await p.broker_activity(code, frm, to)
+        data = await p.broker_activity(
+            code,
+            frm,
+            to,
+            limit=limit,
+            page=page,
+            transaction_type=transaction_type,
+            market_board=market_board,
+            investor_type=investor_type,
+        )
         return {"broker": code.upper(), "activity": data}
     except Exception as e:
         raise HTTPException(502, f"Broker activity failed: {e}")
@@ -91,21 +116,41 @@ async def broker_activity(
 @router.get("/v1/brokers/{symbol}/distribution")
 async def broker_distribution(
     symbol: str,
-    date: str = Query("", description="Date in YYYY-MM-DD (empty for latest)"),
-    period: str = Query("TB_PERIOD_LAST_1_DAY", description="Period filter"),
+    date: str = Query(
+        "", description="Legacy single date in YYYY-MM-DD (ignored when from/to given)"
+    ),
+    period: str = Query(
+        None, description="Period preset, e.g. TB_PERIOD_LAST_1_DAY (ignored when from/to given)"
+    ),
+    frm: str = Query(
+        None,
+        alias="from",
+        description="Range start YYYY-MM-DD (explicit range wins over period/date)",
+    ),
+    to: str = Query(None, alias="to", description="Range end YYYY-MM-DD"),
     investor_type: str = Query("INVESTOR_TYPE_ALL", description="Investor type"),
-    market_board: str = Query("MARKET_TYPE_REGULER", description="Market board"),
+    market_board: str = Query(
+        "MARKET_TYPE_REGULER",
+        description="Market board (MARKET_TYPE_ prefix here, unlike MARKET_BOARD_ on /brokers/summary)",
+    ),
     data_type: str = Query(
         "BROKER_DISTRIBUTION_DATA_TYPE_VALUE", description="Data type: VALUE or VOLUME"
     ),
 ):
-    """Retrieve buyer-to-seller broker distribution matrix for a stock."""
+    """Retrieve buyer-to-seller broker distribution matrix for a stock.
+
+    `period` presets (e.g. TB_PERIOD_LAST_1_DAY) and explicit `from`/`to`
+    dates are mutually exclusive upstream — when `from`/`to` are given,
+    `period` and `date` are omitted so the dates are honored.
+    """
     p = get_provider()
     try:
         data = await p.broker_distribution(
             symbol=symbol,
             date=date,
             period=period,
+            frm=frm,
+            to=to,
             investor_type=investor_type,
             market_board=market_board,
             data_type=data_type,

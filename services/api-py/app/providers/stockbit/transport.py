@@ -164,6 +164,14 @@ class HttpxTransport:
                             "401 received in get_json — attempting silent refresh via refresh_token"
                         )
                         await auth.refresh_tokens_via_stockbit()
+                        # Hot-swap here, not just via the lifespan on_refresh
+                        # callback: scripts/tests use get_auth() without any
+                        # callback wired, and the retry below would otherwise
+                        # re-send the dead bearer from client headers.
+                        try:
+                            self.update_bearer(auth.bearer_token)
+                        except Exception:
+                            pass
                         resp = await self.client().get(url, params=params, headers=headers)
                     except Exception as e:
                         logger.warning(f"On-demand refresh failed after 401: {e}")
@@ -203,6 +211,11 @@ class HttpxTransport:
                             "401 received in post_json — attempting silent refresh via refresh_token"
                         )
                         await auth.refresh_tokens_via_stockbit()
+                        # Same hot-swap as get_json: no reliance on lifespan callback.
+                        try:
+                            self.update_bearer(auth.bearer_token)
+                        except Exception:
+                            pass
                         resp = await self.client().post(url, json=json, params=params)
                     except Exception as e:
                         logger.warning(f"On-demand refresh failed after 401: {e}")

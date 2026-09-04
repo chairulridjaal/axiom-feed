@@ -48,7 +48,9 @@ def _find_env_file(configured: Path | str | None = None) -> Path | None:
     cands = [
         Path(".env"),
         Path("../../.env"),
-        Path(__file__).resolve().parents[4] / ".env",
+        # manager.py parents: [0]=stockbit [1]=providers [2]=app [3]=api-py
+        # [4]=services [5]=repo root. (Was parents[4] = services/ — wrong dir.)
+        Path(__file__).resolve().parents[5] / ".env",
     ]
     for c in cands:
         if c.exists():
@@ -280,6 +282,23 @@ class AuthManager:
 
     async def refresh_tokens_via_stockbit(self) -> Credentials:
         async with self._refresh_lock:
+            # Adopt-then-spend: another process (or a fresh login script run)
+            # may have rotated tokens into .env after we loaded. Spending our
+            # stale in-memory refresh token would 401 AND — worse — if the
+            # file holds the live one, we'd burn a request while the good
+            # token sits on disk. Re-read first; file wins on conflict.
+            if self.env_path and self.env_path.exists():
+                try:
+                    file_bearer, file_refresh = _read_env_tokens(self.env_path)
+                    if file_refresh and file_refresh != self.refresh_token:
+                        logger.info("Adopting newer refresh token from .env before spending")
+                        self.refresh_token = file_refresh
+                        os.environ[REFRESH_ENV] = file_refresh
+                    if file_bearer and file_bearer != self.bearer_token:
+                        self.bearer_token = file_bearer
+                        os.environ[BEARER_ENV] = file_bearer
+                except Exception as e:
+                    logger.warning(f"Pre-refresh .env adopt failed: {e}")
             if not self.refresh_token:
                 raise AuthenticationError(
                     "No STOCKBIT_REFRESH_TOKEN configured — cannot auto-refresh."

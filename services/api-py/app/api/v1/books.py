@@ -12,7 +12,7 @@ router = APIRouter(dependencies=[Depends(verify_api_key)], tags=["Books"])
 async def book_snapshot(symbol: str):
     prov = get_provider()
     try:
-        data = await prov.trade_book(symbol, group_by="GROUP_BY_PRICE")
+        data = await prov.trade_book(symbol, group_by="1")
     except Exception as e:
         raise HTTPException(502, f"upstream failed: {e}")
     return {"symbol": symbol.upper(), "snapshot": data}
@@ -29,7 +29,7 @@ async def books(symbols: str = Query("")):
             b = snap.get(sym)
             if not b:
                 try:
-                    data = await prov.trade_book(sym, group_by="GROUP_BY_PRICE")
+                    data = await prov.trade_book(sym, group_by="1")
                     book_list = (
                         data.get("data", {}).get("book", []) if isinstance(data, dict) else []
                     )
@@ -53,7 +53,7 @@ async def book(symbol: str):
     b = prov.live_feed().snapshot_books().get(sym)
     if not b:
         try:
-            data = await prov.trade_book(sym, group_by="GROUP_BY_PRICE")
+            data = await prov.trade_book(sym, group_by="1")
             if data and isinstance(data, dict) and "data" in data:
                 raw_book = data["data"].get("book", [])
                 bids = []

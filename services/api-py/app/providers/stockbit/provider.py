@@ -363,8 +363,15 @@ class StockbitProvider:
         self,
         symbol: Symbol,
         interval: str | None = None,
-        group_by: str = "GROUP_BY_PRICE",
+        group_by: str = "1",
     ) -> dict[str, Any]:
+        # Upstream quirk (measured 2026-09-04): the endpoint requires a numeric
+        # `group_by` ("1" = by-price book, "2" = alternate grouping). Omitting it
+        # or sending 0 answers 400 "Group by is required". The legacy
+        # "GROUP_BY_PRICE" spelling is accepted upstream but normalized here to
+        # the canonical numeric form.
+        if group_by == "GROUP_BY_PRICE":
+            group_by = "1"
         url = f"{EXODUS}/order-trade/trade-book"
         params: dict[str, Any] = {"symbol": symbol.upper(), "group_by": group_by}
         if interval is not None:
@@ -475,20 +482,35 @@ class StockbitProvider:
             logger.warning(f"movers failed: {e}")
             return []
 
-    async def broker_summary(self, symbol: Symbol, frm: str | None = None, to: str | None = None):
+    async def broker_summary(
+        self,
+        symbol: Symbol,
+        frm: str | None = None,
+        to: str | None = None,
+        period: str | None = None,
+        transaction_type: str = "TRANSACTION_TYPE_NET",
+        market_board: str = "MARKET_BOARD_REGULER",
+        investor_type: str = "INVESTOR_TYPE_ALL",
+        limit: int = 100,
+    ):
         from datetime import datetime as dt
 
-        frm = frm or dt.now().strftime("%Y-%m-%d")
-        to = to or frm
         url = f"{EXODUS}/marketdetectors/{symbol.upper()}"
-        params = {
-            "from": frm,
-            "to": to,
-            "transaction_type": "TRANSACTION_TYPE_NET",
-            "market_board": "MARKET_BOARD_REGULER",
-            "investor_type": "INVESTOR_TYPE_ALL",
-            "limit": 100,
+        params: dict[str, Any] = {
+            "transaction_type": transaction_type,
+            "market_board": market_board,
+            "investor_type": investor_type,
+            "limit": limit,
         }
+        # Upstream quirk: `period` and `from`/`to` are mutually exclusive and
+        # the failure is SILENT — sending both returns HTTP 200 with the latest
+        # session, ignoring the dates. So an explicit `period` wins and dates
+        # are omitted; otherwise dates default to today (latest session).
+        if period:
+            params["period"] = period
+        else:
+            params["from"] = frm or dt.now().strftime("%Y-%m-%d")
+            params["to"] = to or params["from"]
         return await self.transport.get_json(url, params=params, label=f"broker_summary({symbol})")
 
     async def sector_list(self):
@@ -503,44 +525,79 @@ class StockbitProvider:
         url = f"{EXODUS}/emitten/v3/sector/{sid}/subsector/{sub_id}/company"
         return await self.transport.get_json(url, label=f"sector_companies({sid}/{sub_id})")
 
-    async def brokers_top(self, frm: str, to: str):
+    async def brokers_top(
+        self,
+        frm: str,
+        to: str,
+        sort: str = "TB_SORT_BY_TOTAL_VALUE",
+        order: str = "ORDER_BY_DESC",
+        market_type: str = "MARKET_TYPE_ALL",
+    ):
+        from datetime import datetime as dt
+
+        frm = frm or dt.now().strftime("%Y-%m-%d")
+        to = to or frm
         return await self.transport.get_json(
             f"{EXODUS}/order-trade/broker/top",
             params={
                 "from": frm,
                 "to": to,
-                "sort": "TB_SORT_BY_TOTAL_VALUE",
-                "order": "ORDER_BY_DESC",
-                "market_type": "MARKET_TYPE_ALL",
+                "sort": sort,
+                "order": order,
+                "market_type": market_type,
             },
             label="broker_top",
         )
 
-    async def brokers_top_stocks(self, frm: str, to: str):
+    async def brokers_top_stocks(
+        self,
+        frm: str,
+        to: str,
+        investor_type: str = "INVESTOR_TYPE_ALL",
+        market_type: str = "MARKET_TYPE_REGULER",
+        value_type: str = "VALUE_TYPE_NET",
+        page: int = 1,
+        limit: int = 25,
+    ):
         return await self.transport.get_json(
             f"{EXODUS}/order-trade/top-stock",
             params={
                 "start": frm,
                 "end": to,
-                "investor_type": "INVESTOR_TYPE_ALL",
-                "market_type": "MARKET_TYPE_REGULER",
-                "value_type": "VALUE_TYPE_NET",
-                "page": 1,
+                "investor_type": investor_type,
+                "market_type": market_type,
+                "value_type": value_type,
+                "page": page,
+                "limit": limit,
             },
             label="broker_top_stock",
         )
 
-    async def broker_activity(self, code: str, frm: str, to: str):
+    async def broker_activity(
+        self,
+        code: str,
+        frm: str,
+        to: str,
+        limit: int = 50,
+        page: int = 1,
+        transaction_type: str = "TRANSACTION_TYPE_NET",
+        market_board: str = "MARKET_BOARD_REGULER",
+        investor_type: str = "INVESTOR_TYPE_ALL",
+    ):
+        from datetime import datetime as dt
+
+        frm = frm or dt.now().strftime("%Y-%m-%d")
+        to = to or frm
         return await self.transport.get_json(
             f"{EXODUS}/findata-view/marketdetectors/activity/{code.upper()}/detail",
             params={
                 "from": frm,
                 "to": to,
-                "limit": 50,
-                "page": 1,
-                "transaction_type": "TRANSACTION_TYPE_NET",
-                "market_board": "MARKET_BOARD_REGULER",
-                "investor_type": "INVESTOR_TYPE_ALL",
+                "limit": limit,
+                "page": page,
+                "transaction_type": transaction_type,
+                "market_board": market_board,
+                "investor_type": investor_type,
             },
             label=f"broker_activity({code})",
         )
@@ -714,20 +771,32 @@ class StockbitProvider:
         self,
         symbol: Symbol,
         date: str = "",
-        period: str = "TB_PERIOD_LAST_1_DAY",
+        period: str | None = "TB_PERIOD_LAST_1_DAY",
+        frm: str | None = None,
+        to: str | None = None,
         investor_type: str = "INVESTOR_TYPE_ALL",
         market_board: str = "MARKET_TYPE_REGULER",
         data_type: str = "BROKER_DISTRIBUTION_DATA_TYPE_VALUE",
     ) -> Any:
+        # Upstream quirk (mirrors /marketdetectors): `period` and explicit
+        # dates are mutually exclusive — sending both silently serves the
+        # period and ignores the dates. An explicit from/to pair wins here and
+        # drops `period`; otherwise period (or legacy single `date`) is sent.
         url = f"{EXODUS}/order-trade/broker/distribution"
-        params = {
+        params: dict[str, Any] = {
             "symbol": symbol.upper(),
-            "date": date,
-            "period": period,
             "investor_type": investor_type,
             "market_board": market_board,
             "data_type": data_type,
         }
+        if frm or to:
+            params["from"] = frm or to
+            params["to"] = to or frm
+        else:
+            if date:
+                params["date"] = date
+            if period:
+                params["period"] = period
         return await self.transport.get_json(
             url, params=params, label=f"broker_distribution({symbol})"
         )
@@ -794,6 +863,136 @@ class StockbitProvider:
         url = f"{EXODUS}/order-trade/running-trade"
         params = {"sort": sort, "limit": limit, "order_by": order_by}
         return await self.transport.get_json(url, params=params, label="running_trade_snapshot")
+
+    # ── Market Microstructure & Session State (verified 2026-09-04) ──────
+    async def running_trade_chart(self, symbol: Symbol) -> Any:
+        """Minute-resolution session tape + intraday broker flow timeline.
+
+        Returns 09:00→16:14 one-minute OHLC points (`price_chart_data`) and
+        per-broker cumulative net value/volume series (`broker_chart_data`,
+        session's main participants). Upstream returns the full session even
+        after close, unlike the live-only `/order-trade/running-trade` tape.
+        """
+        url = f"{EXODUS}/order-trade/running-trade/chart/{symbol.upper()}"
+        return await self.transport.get_json(url, label=f"running_trade_chart({symbol})")
+
+    async def order_queue(
+        self, symbol: Symbol, sort_by: str | None = None, limit: int | None = None
+    ) -> Any:
+        """Resting order queue (unmatched pending orders) for one symbol.
+
+        Upstream requires the key `stock_code` — `symbol`/`code` 400 with
+        "Stock code is required".
+        """
+        url = f"{EXODUS}/order-trade/order-queue"
+        params: dict[str, Any] = {"stock_code": symbol.upper()}
+        if sort_by is not None:
+            params["sort_by"] = sort_by
+        if limit is not None:
+            params["limit"] = limit
+        return await self.transport.get_json(url, params=params, label=f"order_queue({symbol})")
+
+    async def market_session(self) -> Any:
+        """Authoritative IDX session state (pre-open/session/break/closed).
+
+        `data.detail.{regular,fca}` carry `state_name`, `is_last_session`,
+        `is_end_of_day`, and session time windows. Use this instead of
+        hardcoding WIB wall-clock schedules to decide whether empty
+        movers/queues are normal.
+        """
+        url = f"{EXODUS}/company-price-feed/market-time/session"
+        return await self.transport.get_json(url, label="market_session")
+
+    # ── Index Baskets & Peer Multiples (verified 2026-09-04) ──────────────
+    async def index_members(self, index_code: str, limit: int = 50) -> Any:
+        """Constituent ticker list for an IDX index (LQ45, IDX30, KOMPAS100…).
+
+        Rows carry last price/change/volume inline, so one call replaces N
+        per-symbol quote lookups when screening a basket.
+        """
+        url = f"{EXODUS}/emitten/indexes/{index_code.strip().upper()}"
+        return await self.transport.get_json(
+            url, params={"limit": limit}, label=f"index_members({index_code})"
+        )
+
+    async def peer_ratios(self, symbol: Symbol) -> Any:
+        """Per-metric peer pairing: subject's ratios vs subsector industry aggregate.
+
+        Returns paired subject/industry readings side-by-side with wire keys —
+        the relative-valuation denominator absolute bands cannot supply.
+        """
+        url = f"{EXODUS}/comparison/{symbol.upper()}/ratios"
+        return await self.transport.get_json(url, label=f"peer_ratios({symbol})")
+
+    async def peer_industries(self, symbol: Symbol) -> Any:
+        """Industry/sector aggregate multiples for a symbol's subsector."""
+        url = f"{EXODUS}/comparison/{symbol.upper()}/industries"
+        return await self.transport.get_json(url, label=f"peer_industries({symbol})")
+
+    # ── Corporate Actions: Status, Day Calendar, Earnings, Underwriters ────
+    async def corpaction_status(self, symbols: str | list[str]) -> Any:
+        """UMA / special-notation status for 1..N tickers in a single call."""
+        syms = (
+            ",".join(s.strip().upper() for s in symbols)
+            if isinstance(symbols, list)
+            else ",".join(s.strip().upper() for s in str(symbols).split(",") if s.strip())
+        )
+        url = f"{EXODUS}/corpaction/status"
+        return await self.transport.get_json(
+            url, params={"symbol": syms}, label=f"corpaction_status({syms})"
+        )
+
+    async def corpaction_day(self, day: str) -> Any:
+        """Market-wide corporate-action calendar for ONE date (YYYY-MM-DD).
+
+        Returns per-kind buckets (dividend, rups, tender, pubex, ipo…).
+        `from`/`to` are silently ignored upstream — single date only.
+        """
+        url = f"{EXODUS}/corpaction"
+        return await self.transport.get_json(
+            url, params={"date": day}, label=f"corpaction_day({day})"
+        )
+
+    async def earnings_recap(
+        self,
+        year: int | None = None,
+        quarter: int | None = None,
+        page: int = 1,
+        search: str | None = None,
+        sort_column: int = 1,
+        order: str = "desc",
+    ) -> Any:
+        """Market-wide earnings recap: consensus estimate vs actual by quarter.
+
+        Upstream requires `sort_column` + `order` (400 without them) and
+        rejects unknown keys such as `filter` — so only known params are sent.
+        `search` is a free-text issuer search, not a ticker lookup.
+        """
+        url = f"{EXODUS}/earnings"
+        params: dict[str, Any] = {"page": page, "sort_column": sort_column, "order": order}
+        if year is not None:
+            params["year"] = year
+        if quarter is not None:
+            params["quarter"] = quarter
+        if search:
+            params["search"] = search
+        return await self.transport.get_json(url, params=params, label="earnings_recap")
+
+    async def underwriter_performance(
+        self, underwriter_code: str, sort_by: str | None = None
+    ) -> Any:
+        """One underwriter's IPO track record (first-day returns, ARA streaks).
+
+        NOTE: the bare directory route `/order-trade/underwriters` is 404
+        upstream (confirmed live 2026-09-04) — only the per-code
+        performance route exists.
+        """
+        code = underwriter_code.strip().upper()
+        url = f"{EXODUS}/order-trade/underwriters/{code}/ipo-performance"
+        params = {"sort_by": sort_by} if sort_by else None
+        return await self.transport.get_json(
+            url, params=params, label=f"underwriter_performance({code})"
+        )
 
     # ── Fundachart ──────────────────────────────────────────────────────
     async def fundachart_templates(self) -> Any:

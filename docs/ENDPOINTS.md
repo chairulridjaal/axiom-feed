@@ -500,8 +500,9 @@ Quantifies institutional flow (*Bandar Detector*), overall accumulation/distribu
 | Name | In | Type | Required | Default | Description |
 |---|---|---|---|---|---|
 | `symbol` | Path | `string` | **Yes** | — | Stock ticker (e.g. `ASII`, `BBCA`) |
-| `from` | Query | `string` | No | Today | Start date (`YYYY-MM-DD`) |
-| `to` | Query | `string` | No | Today | End date (`YYYY-MM-DD`) |
+| `from` | Query | `string` | No | Today | Start date (`YYYY-MM-DD`). Ignored upstream when `period` is set |
+| `to` | Query | `string` | No | Today | End date (`YYYY-MM-DD`). Ignored upstream when `period` is set |
+| `period` | Query | `string` | No | — | Native upstream aggregation window (`BROKER_SUMMARY_PERIOD_LATEST`, `BROKER_SUMMARY_PERIOD_LAST_7_DAYS`, `BROKER_SUMMARY_PERIOD_LAST_3_MONTHS`, `BROKER_SUMMARY_PERIOD_YEAR_TO_DATE`). Mutually exclusive with `from`/`to` — when set, dates are omitted because upstream silently ignores them |
 | `transaction_type` | Query | `string` | No | `TRANSACTION_TYPE_NET` | `TRANSACTION_TYPE_NET`, `TRANSACTION_TYPE_GROSS` |
 | `market_board` | Query | `string` | No | `MARKET_BOARD_REGULER` | `MARKET_BOARD_REGULER`, `MARKET_BOARD_ALL` |
 | `investor_type` | Query | `string` | No | `INVESTOR_TYPE_ALL` | `INVESTOR_TYPE_ALL`, `INVESTOR_TYPE_FOREIGN`, `INVESTOR_TYPE_DOMESTIC` |
@@ -1255,4 +1256,130 @@ curl -s -X POST "http://localhost:8000/v1/analytics/archive?symbol=BBCA" | jq .
   "file": "data/parquet/date=2026-09-04/BBCA.parquet",
   "date": "2026-09-04"
 }
+```
+
+---
+
+## 23. Market Microstructure & Session State
+
+---
+
+### `GET /v1/market/session`
+Authoritative IDX session state (`data.detail.{regular,fca}` with `state_name`, session windows, `is_last_session`, `is_end_of_day`). Use instead of wall-clock heuristics to decide whether empty movers/order queues are normal.
+
+#### Example Request
+```bash
+curl -s http://localhost:8000/v1/market/session | jq .
+```
+
+---
+
+### `GET /v1/market/order-queue/{symbol}`
+Resting (unmatched pending) buy/sell order queue for one symbol. Upstream requires `stock_code` — handled server-side.
+
+#### Parameters
+| Name | In | Type | Required | Default | Description |
+|---|---|---|---|---|---|
+| `symbol` | Path | `string` | **Yes** | — | Stock ticker (e.g. `BBCA`) |
+| `sort_by` | Query | `string` | No | — | Upstream sort key |
+| `limit` | Query | `integer` | No | — | Max rows (1–500) |
+
+#### Example Request
+```bash
+curl -s "http://localhost:8000/v1/market/order-queue/BBCA?limit=10" | jq .
+```
+
+---
+
+### `GET /v1/market/intraday/{symbol}`
+Minute-resolution session tape plus intraday broker flow for one symbol, served for the full session even after close (unlike the live-only `/v1/trades` tape).
+
+#### Parameters
+| Name | In | Type | Required | Default | Description |
+|---|---|---|---|---|---|
+| `symbol` | Path | `string` | **Yes** | — | Stock ticker (e.g. `BBCA`) |
+| `kind` | Query | `string` | No | `price` | `price` (09:00→16:14 one-minute OHLC points) or `brokers` (per-broker cumulative net value/volume series) |
+
+#### Example Request
+```bash
+curl -s "http://localhost:8000/v1/market/intraday/BBCA?kind=brokers" | jq .
+```
+
+---
+
+## 24. Index Baskets & Peer Multiples
+
+---
+
+### `GET /v1/indexes/{index_code}/members`
+Constituent ticker list for an IDX index (`LQ45`, `IDX30`, `KOMPAS100`, …). Rows carry last price/change/volume inline — one call replaces N per-symbol quote lookups.
+
+#### Parameters
+| Name | In | Type | Required | Default | Description |
+|---|---|---|---|---|---|
+| `index_code` | Path | `string` | **Yes** | — | Index code (e.g. `LQ45`) |
+| `limit` | Query | `integer` | No | `50` | Max members (1–500) |
+
+#### Example Request
+```bash
+curl -s "http://localhost:8000/v1/indexes/LQ45/members?limit=10" | jq .
+```
+
+---
+
+### `GET /v1/fundamentals/{symbol}/peers`
+Peer-relative multiples: subject ratios side-by-side with the subsector industry aggregate — the relative-valuation denominator absolute bands cannot supply.
+
+#### Example Request
+```bash
+curl -s http://localhost:8000/v1/fundamentals/BBCA/peers | jq .
+```
+
+---
+
+## 25. Corporate Status, Day Calendar, Earnings & Underwriters
+
+---
+
+### `GET /v1/market/corpaction-status?symbols=A,B,C`
+UMA / special-notation (Notasi Khusus) flag check for 1..N tickers in one call. Per symbol: `uma` bool, `notations` list, `corp_action: {active, text}`. A lightweight flag check — for dated action detail use `/v1/calendars/companies/{symbol}/actions`.
+
+#### Example Request
+```bash
+curl -s "http://localhost:8000/v1/market/corpaction-status?symbols=BBCA,BBRI" | jq .
+```
+
+---
+
+### `GET /v1/calendars/day/{day}`
+Market-wide corporate-action calendar for ONE date (`YYYY-MM-DD`), returned as per-kind buckets (`dividend`, `rups`, `tender`, `pubex`, `ipo`, …).
+
+#### Example Request
+```bash
+curl -s http://localhost:8000/v1/calendars/day/2026-09-04 | jq .
+```
+
+---
+
+### `GET /v1/market/earnings`
+Market-wide earnings recap: consensus estimate vs actual by quarter. Upstream requires `sort_column` + `order` (400 without them) and rejects unknown keys such as `filter` — only the documented params below are sent.
+
+#### Parameters
+| Name | In | Type | Required | Default | Description |
+|---|---|---|---|---|---|
+| `year` | Query | `integer` | No | — | Calendar year |
+| `quarter` | Query | `integer` | No | — | 1–4 |
+| `page` | Query | `integer` | No | `1` | Page number |
+| `search` | Query | `string` | No | — | Free-text issuer search |
+| `sort_column` | Query | `integer` | No | `1` | Upstream sort column |
+| `order` | Query | `string` | No | `desc` | `asc` or `desc` |
+
+---
+
+### `GET /v1/underwriters/{code}/performance`
+One IPO underwriter's track record: per-IPO first-day returns, ARA streaks, funds raised, plus summary aggregates. NOTE: the bare underwriter directory route is 404 upstream — only the per-code performance route exists, so `code` is required.
+
+#### Example Request
+```bash
+curl -s http://localhost:8000/v1/underwriters/YP/performance | jq .
 ```

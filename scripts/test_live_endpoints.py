@@ -91,6 +91,19 @@ async def main():
             {"symbols": "BBCA", "period": "RT_PERIOD_LAST_1_YEAR"},
         ),
         ("Running Trades Snapshot", "/v1/trades/running/snapshot", {"limit": 10}),
+        ("Market Session", "/v1/market/session", None),
+        ("Order Queue", "/v1/market/order-queue/BBCA", {"limit": 3}),
+        ("Intraday Price Tape", "/v1/market/intraday/BBCA", {"kind": "price"}),
+        ("Intraday Broker Flow", "/v1/market/intraday/BBCA", {"kind": "brokers"}),
+        ("Index Members LQ45", "/v1/indexes/LQ45/members", {"limit": 3}),
+        ("Peer Multiples", "/v1/fundamentals/BBCA/peers", None),
+        ("Corpaction Day", "/v1/calendars/day/2026-09-04", None),
+        ("Corpaction Status", "/v1/market/corpaction-status", {"symbols": "BBCA,BBRI"}),
+        ("Earnings Recap", "/v1/market/earnings", {"year": 2026, "quarter": 1}),
+        ("Underwriter Performance", "/v1/underwriters/YP/performance", None),
+        ("Broker Summary (period)", "/v1/brokers/summary/BBCA", {"period": "BROKER_SUMMARY_PERIOD_LAST_7_DAYS"}),
+        ("Broker Summary (gross)", "/v1/brokers/summary/BBCA", {"from": "2026-09-04", "to": "2026-09-04", "transaction_type": "TRANSACTION_TYPE_GROSS", "limit": 5}),
+        ("Tradebook Snapshot", "/v1/books/snapshot/BBCA", None),
     ]
 
     print(
