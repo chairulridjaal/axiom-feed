@@ -91,7 +91,15 @@ async def lifespan(app: FastAPI):
 
         return _cb
 
-    if ingest_mode == "redis" and redis_url:
+    if ingest_mode == "direct":
+        from app.infra.bus import direct_ipc_consumer_task
+
+        ipc_host = os.getenv("DIRECT_IPC_HOST", "127.0.0.1")
+        ipc_port = int(os.getenv("DIRECT_IPC_PORT", "8379"))
+        consumer_task = asyncio.create_task(direct_ipc_consumer_task(hub, ipc_host, ipc_port))
+        consumer_task.add_done_callback(_log_task_exit("direct_ipc_consumer"))
+        logger.info(f"direct IPC consumer started for {ipc_host}:{ipc_port}")
+    elif ingest_mode == "redis" and redis_url:
         from app.infra.bus import redis_consumer_task
 
         consumer_task = asyncio.create_task(redis_consumer_task(hub, redis_url))
@@ -154,6 +162,7 @@ app.add_middleware(
 )
 
 # ── register routers ────────────────────────────────────────────────────
+from app.api.v1 import analytics as analytics_mod
 from app.api.v1 import books as books_mod
 from app.api.v1 import brokers as brokers_mod
 from app.api.v1 import charts as charts_mod
@@ -187,6 +196,7 @@ app.include_router(insider_mod.router)
 app.include_router(screeners_mod.router)
 app.include_router(research_mod.router)
 app.include_router(news_mod.router)
+app.include_router(analytics_mod.router)
 
 
 # health already mounted; fallback root

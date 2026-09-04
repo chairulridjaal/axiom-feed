@@ -71,7 +71,8 @@ def init_health(hub: Hub, cache: BoundedCache):
                                 await r.close()
                             except Exception:
                                 pass
-        ready_flag = ws_ok and redis_ok
+        ingest_mode = os.getenv("INGEST_MODE", "redis")
+        ready_flag = ws_ok and (redis_ok if ingest_mode == "redis" else True)
         return {
             "ready": ready_flag,
             "ws_ok": ws_ok,
