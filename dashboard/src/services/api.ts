@@ -113,7 +113,6 @@ export async function fetchLiveTrades(
         }));
       }
     } catch {}
-  }
 
   return [];
 }
@@ -172,7 +171,6 @@ export async function fetchLiveQuote(symbol: string, baseUrl: string = getStored
         };
       }
     } catch {}
-  }
   return null;
 }
 
@@ -235,7 +233,6 @@ export async function fetchLiveBook(symbol: string, baseUrl: string = getStoredB
         }
       }
     } catch {}
-  }
   return null;
 }
 
@@ -274,7 +271,6 @@ export async function fetchLiveCandles(
         if (candles.length > 0) return candles;
       }
     } catch {}
-  }
   return [];
 }
 
@@ -287,7 +283,6 @@ export async function fetchPricePerformance(symbol: string, baseUrl: string = ge
         return data.performance?.prices || [];
       }
     } catch {}
-  }
   return [];
 }
 
@@ -315,7 +310,6 @@ export async function fetchMarketMovers(
         });
       }
     } catch {}
-  }
   return [];
 }
 
@@ -351,7 +345,6 @@ export async function fetchBrokersTop(baseUrl: string = getStoredBackendUrl()): 
         }
       }
     } catch {}
-  }
   return [];
 }
 
@@ -396,7 +389,6 @@ export async function fetchBrokerSummary(
         };
       }
     } catch {}
-  }
   return null;
 }
 
@@ -411,7 +403,6 @@ export async function fetchBrokerTopStocks(baseUrl: string = getStoredBackendUrl
         return { top_buy: topBuy, top_sell: topSell };
       }
     } catch {}
-  }
   return { top_buy: [], top_sell: [] };
 }
 
@@ -447,7 +438,6 @@ export async function fetchBrokerActivity(
         };
       }
     } catch {}
-  }
   return null;
 }
 
@@ -467,7 +457,6 @@ export async function fetchSectors(baseUrl: string = getStoredBackendUrl()): Pro
         }));
       }
     } catch {}
-  }
   return [];
 }
 
@@ -488,7 +477,6 @@ export async function fetchSubsectors(
         }));
       }
     } catch {}
-  }
   return [];
 }
 
@@ -514,7 +502,6 @@ export async function fetchSectorCompanies(
         }));
       }
     } catch {}
-  }
   return [];
 }
 
@@ -567,7 +554,6 @@ export async function fetchFundamentals(
         };
       }
     } catch {}
-  }
   return null;
 }
 
@@ -584,7 +570,6 @@ export async function fetchFinancials(
         return await res.json();
       }
     } catch {}
-  }
   return null;
 }
 
@@ -615,7 +600,6 @@ export async function fetchCompanyProfile(
         };
       }
     } catch {}
-  }
   return null;
 }
 
@@ -631,7 +615,6 @@ export async function fetchCompanySubsidiaries(
         return data.subsidiaries || [];
       }
     } catch {}
-  }
   return [];
 }
 
@@ -647,7 +630,6 @@ export async function fetchCalendars(
         return data.data || null;
       }
     } catch {}
-  }
   return null;
 }
 
@@ -663,7 +645,6 @@ export async function fetchCompanyActions(
         return data.actions || [];
       }
     } catch {}
-  }
   return [];
 }
 
