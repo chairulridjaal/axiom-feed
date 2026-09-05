@@ -18,16 +18,33 @@ async def get_morning_notes(
     cursor_id: int | None = Query(None, description="Cursor ID for pagination"),
 ) -> dict[str, Any]:
     """Retrieve daily morning macro briefings, sector updates, and pre-market analyst notes from the official Stockbit Reports desk."""
-    p = get_provider()
-    try:
-        data = await p.broadcast_messages(room_id=338965, limit=limit, cursor_id=cursor_id)
-        raw_data = data.get("data") if isinstance(data, dict) else data
-        return {
-            "source": "Stockbit Reports (Broadcast 338965)",
-            "data": raw_data,
-        }
-    except Exception as e:
-        raise HTTPException(502, f"Failed to fetch morning notes: {e}")
+    from app.infra.upstream_cache import cached_json
+
+    async def _produce():
+        p = get_provider()
+        _limit = limit if isinstance(limit, int) else 50
+        _cursor = cursor_id if isinstance(cursor_id, int) else None
+        try:
+            data = await p.broadcast_messages(room_id=338965, limit=_limit, cursor_id=_cursor)
+            raw_data = data.get("data") if isinstance(data, dict) else data
+            return {
+                "source": "Stockbit Reports (Broadcast 338965)",
+                "data": raw_data,
+            }
+        except Exception as e:
+            raise HTTPException(502, f"Failed to fetch morning notes: {e}")
+
+    _limit = limit if isinstance(limit, int) else 50
+    _cursor = cursor_id if isinstance(cursor_id, int) else None
+    if _cursor is not None:
+        p = get_provider()
+        try:
+            data = await p.broadcast_messages(room_id=338965, limit=_limit, cursor_id=_cursor)
+            raw_data = data.get("data") if isinstance(data, dict) else data
+            return {"source": "Stockbit Reports (Broadcast 338965)", "data": raw_data}
+        except Exception as e:
+            raise HTTPException(502, f"Failed to fetch morning notes: {e}")
+    return await cached_json(f"default:morning-notes:{_limit}", _produce)
 
 
 @router.get("/v1/research/reports")
@@ -37,33 +54,61 @@ async def get_research_reports(
     limit: int = Query(20, ge=1, le=50, description="Number of reports to return"),
 ) -> dict[str, Any]:
     """Retrieve institutional equity research reports and thesis writeups published by an analyst account."""
-    p = get_provider()
-    try:
-        data = await p.user_stream(
-            username=account,
-            category="STREAM_CATEGORY_MAIN_IDEAS",
-            last_stream_id=last_stream_id,
-            limit=limit,
-        )
-        raw_data = data.get("data") if isinstance(data, dict) else data
-        return {
-            "account": account,
-            "data": raw_data,
-        }
-    except Exception as e:
-        raise HTTPException(502, f"Failed to fetch research reports for {account}: {e}")
+    from app.infra.upstream_cache import cached_json
+
+    _limit = limit if isinstance(limit, int) else 20
+    _last = last_stream_id if isinstance(last_stream_id, int) else 0
+    if _last:
+        p = get_provider()
+        try:
+            data = await p.user_stream(
+                username=account,
+                category="STREAM_CATEGORY_MAIN_IDEAS",
+                last_stream_id=_last,
+                limit=_limit,
+            )
+            raw_data = data.get("data") if isinstance(data, dict) else data
+            return {"account": account, "data": raw_data}
+        except Exception as e:
+            raise HTTPException(502, f"Failed to fetch research reports for {account}: {e}")
+
+    async def _produce():
+        p = get_provider()
+        _lim = limit if isinstance(limit, int) else 20
+        _ls = last_stream_id if isinstance(last_stream_id, int) else 0
+        try:
+            data = await p.user_stream(
+                username=account,
+                category="STREAM_CATEGORY_MAIN_IDEAS",
+                last_stream_id=_ls,
+                limit=_lim,
+            )
+            raw_data = data.get("data") if isinstance(data, dict) else data
+            return {
+                "account": account,
+                "data": raw_data,
+            }
+        except Exception as e:
+            raise HTTPException(502, f"Failed to fetch research reports for {account}: {e}")
+
+    return await cached_json(f"default:research:{account}:{_limit}", _produce)
 
 
 @router.get("/v1/research/reports/{post_id}")
 async def get_research_report_detail(post_id: int) -> dict[str, Any]:
     """Retrieve complete research report article, thesis breakdown, PDF attachments, and analyst models."""
-    p = get_provider()
-    try:
-        data = await p.stream_post(post_id=post_id)
-        raw_data = data.get("data") if isinstance(data, dict) else data
-        return {
-            "post_id": post_id,
-            "report": raw_data,
-        }
-    except Exception as e:
-        raise HTTPException(502, f"Failed to fetch research report {post_id}: {e}")
+    from app.infra.upstream_cache import cached_json
+
+    async def _produce():
+        p = get_provider()
+        try:
+            data = await p.stream_post(post_id=post_id)
+            raw_data = data.get("data") if isinstance(data, dict) else data
+            return {
+                "post_id": post_id,
+                "report": raw_data,
+            }
+        except Exception as e:
+            raise HTTPException(502, f"Failed to fetch research report {post_id}: {e}")
+
+    return await cached_json(f"default:report:{post_id}", _produce)

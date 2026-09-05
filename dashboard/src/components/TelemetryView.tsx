@@ -30,9 +30,9 @@ export const TelemetryView: React.FC<TelemetryViewProps> = ({ health }) => {
         curlCommand={`curl -s "http://127.0.0.1:8000/v1/health" | jq`}
         responsePreview={`{
   "status": "${health.status}",
-  "hub": { "clients": ${health.hub?.clients ?? 1}, "max_clients": 500, "messages_dropped": ${health.hub?.messages_dropped ?? 0} },
-  "cache": { "bytes": ${health.cache?.bytes ?? 15500000}, "max_bytes": 52428800 },
-  "auth": { "bearer_set": true, "ttl_seconds": ${health.auth?.ttl_seconds ?? 72000} }
+  "hub": { "clients": ${health.hub?.clients ?? 0}, "max_clients": ${health.hub?.max_clients ?? 500}, "messages_dropped": ${health.hub?.messages_dropped ?? 0} },
+  "cache": { "bytes": ${health.cache?.bytes ?? 0}, "max_bytes": 52428800 },
+  "auth": { "bearer_set": ${health.auth?.bearer_set ? 'true' : 'false'}, "ttl_seconds": ${health.auth?.ttl_seconds ?? 0} }
 }`}
       />
 
@@ -41,7 +41,7 @@ export const TelemetryView: React.FC<TelemetryViewProps> = ({ health }) => {
         <div className="border border-[#202020] bg-[#111111] p-3.5 rounded-[2px]">
           <div className="text-[#7e7e7e] text-[11px] mb-1">HUB CLIENTS</div>
           <div className="text-[#eeeeee] font-bold text-[17px]">
-            {health.hub?.clients ?? 1} / {health.hub?.max_clients ?? 500}
+            {health.hub?.clients ?? 0} / {health.hub?.max_clients ?? 500}
           </div>
           <div className="text-[#7e7e7e] text-[11px] mt-0.5">Limit 500 (429 code)</div>
         </div>
@@ -57,9 +57,9 @@ export const TelemetryView: React.FC<TelemetryViewProps> = ({ health }) => {
         <div className="border border-[#202020] bg-[#111111] p-3.5 rounded-[2px]">
           <div className="text-[#7e7e7e] text-[11px] mb-1">CACHE MEMORY</div>
           <div className="text-[#eeeeee] font-bold text-[17px]">
-            {health.cache ? (health.cache.bytes / 1024 / 1024).toFixed(1) : '14.8'} / 50 MB
+            {health.cache ? (health.cache.bytes / 1024 / 1024).toFixed(1) : '0.0'} / 50 MB
           </div>
-          <div className="text-[#7e7e7e] text-[11px] mt-0.5">{health.cache?.keys ?? 12} keys in memory</div>
+          <div className="text-[#7e7e7e] text-[11px] mt-0.5">{health.cache?.keys ?? 0} keys in memory</div>
         </div>
 
         <div className="border border-[#202020] bg-[#111111] p-3.5 rounded-[2px]">

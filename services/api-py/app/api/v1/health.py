@@ -30,6 +30,18 @@ def init_health(hub: Hub, cache: BoundedCache):
         hub_stats = hub.stats()
         degraded_by_hub = hub_stats.get("messages_dropped", 0) > 5000
         status = "healthy" if (entitlement_active and not degraded_by_hub) else "degraded"
+        cache_stats = dict(cache.stats())
+        try:
+            from app.infra.upstream_cache import upstream_cache
+
+            up = upstream_cache.stats()
+            cache_stats["keys"] = cache_stats.get("keys", 0) + up.get("keys", 0)
+            cache_stats["bytes"] = cache_stats.get("bytes", 0) + up.get("bytes", 0)
+            cache_stats["hits"] = cache_stats.get("hits", 0) + up.get("hits", 0)
+            cache_stats["misses"] = cache_stats.get("misses", 0) + up.get("misses", 0)
+            cache_stats["upstream"] = up
+        except Exception:
+            pass
         return {
             "status": status,
             "uptime_seconds": time.monotonic() - _started_at,
@@ -39,7 +51,7 @@ def init_health(hub: Hub, cache: BoundedCache):
                 [] if status == "healthy" else (["hub_drop_high"] if degraded_by_hub else ["auth"])
             ),
             "hub": hub_stats,
-            "cache": cache.stats(),
+            "cache": cache_stats,
             "ingest": os.getenv("INGEST_MODE", "redis"),
             "auth": ah,
         }

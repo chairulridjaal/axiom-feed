@@ -85,6 +85,8 @@ def init_stream(hub: Hub):
 
 
 async def _sender(ws: WebSocket, q: asyncio.Queue):
+    from app.infra.bus import _preserialize
+
     try:
         while True:
             msg = await q.get()
@@ -93,16 +95,10 @@ async def _sender(ws: WebSocket, q: asyncio.Queue):
             elif isinstance(msg, (bytes, bytearray)):
                 await ws.send_bytes(bytes(msg))
             elif isinstance(msg, dict):
-                text = msg.get("_json_text")
-                if text is None:
-                    clean = (
-                        {k: v for k, v in msg.items() if not k.startswith("_")}
-                        if any(k.startswith("_") for k in msg)
-                        else msg
-                    )
-                    text = orjson.dumps(clean, default=str).decode("utf-8")
-                    msg["_json_text"] = text
-                await ws.send_text(text)
+                _preserialize(msg)
+                await ws.send_text(
+                    msg.get("_json_text") or orjson.dumps(msg, default=str).decode("utf-8")
+                )
             else:
                 await ws.send_text(orjson.dumps(msg, default=str).decode("utf-8"))
     except asyncio.CancelledError:

@@ -116,3 +116,100 @@ def test_auth_manager_health_with_refresh(tmp_path):
     assert h["bearer_set"] is True
     assert h["refresh_token_set"] is True
     assert h["refresh_ttl_seconds"] is not None and h["refresh_ttl_seconds"] > 86400 * 6
+
+
+@pytest.mark.asyncio
+async def test_refresh_adopts_newer_env_token_before_spending(tmp_path, monkeypatch):
+    """Single-use rotation: if .env holds a newer refresh token than memory
+    (fresh login script run, another process), spend the file's — not ours."""
+    import app.providers.stockbit.manager as mgr_mod
+
+    now = int(time.time())
+    cookies_file = tmp_path / "cookies.json"
+    cookies_file.write_text("[]", encoding="utf-8")
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        'STOCKBIT_BEARER_TOKEN="file_bearer"\nSTOCKBIT_REFRESH_TOKEN="file_refresh_live"\n',
+        encoding="utf-8",
+    )
+
+    mgr = init_auth(
+        bearer_token="stale_bearer",
+        refresh_token="stale_refresh_retired",
+        cookies_path=cookies_file,
+    )
+    mgr.env_path = env_file
+
+    spent = {}
+
+    async def fake_exchange(token, client=None):
+        spent["token"] = token
+        return "new_bearer", "new_refresh"
+
+    async def fake_fetch(bearer, cookies_path=None, refresh_token=None):
+        return Credentials(
+            user_id="1",
+            ws_key="k",
+            bearer_token=bearer,
+            refresh_token=refresh_token,
+            exp=now + 86000,
+            refresh_exp=now + 86400 * 7,
+        )
+
+    monkeypatch.setattr(mgr_mod, "exchange_refresh_token", fake_exchange)
+    monkeypatch.setattr(mgr_mod, "fetch_credentials", fake_fetch)
+
+    creds = await mgr.refresh_tokens_via_stockbit()
+    assert spent["token"] == "file_refresh_live"
+    assert creds.bearer_token == "new_bearer"
+    b, r = _read_env_tokens(env_file)
+    assert b == "new_bearer" and r == "new_refresh"
+
+
+@pytest.mark.asyncio
+async def test_transport_hot_swaps_bearer_on_401(monkeypatch):
+    """On-demand refresh must update client headers even with no on_refresh
+    callback wired (scripts/tests), or the retry re-sends the dead bearer."""
+    import httpx
+
+    from app.providers.stockbit import auth as auth_mod
+    from app.providers.stockbit.transport import HttpxTransport
+
+    t = HttpxTransport(bearer_token="dead_bearer")
+    seen_auth = []
+
+    class FakeResp:
+        def __init__(self, status):
+            self.status_code = status
+            self.headers = {}
+            self.content = b"{}"
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise httpx.HTTPStatusError("err", request=None, response=self)
+
+    class FakeClient:
+        async def get(self, url, params=None, headers=None):
+            auth = (headers or {}).get("Authorization", "") or (
+                f"Bearer {t.bearer}" if t.bearer else ""
+            )
+            seen_auth.append(auth)
+            if "dead_bearer" in auth:
+                return FakeResp(401)
+            return FakeResp(200)
+
+    fake_transport_client = FakeClient()
+    monkeypatch.setattr(t, "client", lambda: fake_transport_client)
+
+    class FakeAuth:
+        bearer_token = "dead_bearer"
+        refresh_token = "live_refresh"
+
+        async def refresh_tokens_via_stockbit(self):
+            self.bearer_token = "fresh_bearer"
+
+    monkeypatch.setattr(auth_mod, "get_auth", lambda: FakeAuth())
+
+    await t.get_json("https://exodus.stockbit.com/probe", label="test")
+    assert seen_auth[0].endswith("dead_bearer")
+    assert seen_auth[-1].endswith("fresh_bearer")

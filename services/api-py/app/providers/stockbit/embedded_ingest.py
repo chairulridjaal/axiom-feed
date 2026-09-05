@@ -1,8 +1,13 @@
-"""Embedded live feed runner using websockets in Python (INGEST_MODE=embedded or dev)."""
+"""DEV-ONLY embedded live feed (INGEST_MODE=embedded, no Redis/Rust needed).
+
+Production path is Rust ingest-rs → Redis Streams → scaled api-py replicas
+(INGEST_MODE=redis). This module is a local convenience only — never production.
+"""
 
 import asyncio
 import logging
 import os
+import zlib
 
 logger = logging.getLogger(__name__)
 
@@ -11,8 +16,6 @@ _DEBUG = os.getenv("EMBEDDED_DEBUG", "0").strip() not in ("", "0", "false", "Fal
 
 
 def _try_zlib(raw: bytes) -> bytes | None:
-    import zlib
-
     try:
         out = zlib.decompress(raw)
         return out if out and len(out) > 8 else None
@@ -21,8 +24,6 @@ def _try_zlib(raw: bytes) -> bytes | None:
 
 
 def _try_deflate(raw: bytes) -> bytes | None:
-    import zlib
-
     try:
         out = zlib.decompress(raw, -15)
         return out if out and len(out) > 8 else None
@@ -67,6 +68,12 @@ async def run_embedded_ingest(provider, hub):
 
     from app.providers.stockbit.auth import get_auth
     from app.providers.stockbit.generated import datafeed_pb2 as pb_module
+    from app.providers.stockbit.mapping import (
+        map_legacy_orderbook_msg,
+        map_liveprice_to_quote,
+        map_orderbook_body_to_book,
+        map_running_trade_to_domain,
+    )
 
     pb: Any = pb_module
 
@@ -172,10 +179,6 @@ async def run_embedded_ingest(provider, hub):
                                     )
                                     continue
                                 if which == "running_trade_batch":
-                                    from app.providers.stockbit.mapping import (
-                                        map_running_trade_to_domain,
-                                    )
-
                                     batch_events: list[dict] = []
                                     for t in wrapper.running_trade_batch.batch:
                                         trade = map_running_trade_to_domain(t)
@@ -200,10 +203,6 @@ async def run_embedded_ingest(provider, hub):
                                     if batch_events:
                                         await hub.publish_batch(batch_events)
                                 elif which == "running_trade":
-                                    from app.providers.stockbit.mapping import (
-                                        map_running_trade_to_domain,
-                                    )
-
                                     trade = map_running_trade_to_domain(wrapper.running_trade)
                                     provider.live_feed().ingest_trade(trade)
                                     await hub.publish(
@@ -224,10 +223,6 @@ async def run_embedded_ingest(provider, hub):
                                         }
                                     )
                                 elif which == "liveprice":
-                                    from app.providers.stockbit.mapping import (
-                                        map_liveprice_to_quote,
-                                    )
-
                                     q = map_liveprice_to_quote(wrapper.liveprice)
                                     provider.live_feed().ingest_quote(q)
                                     await hub.publish(
@@ -244,10 +239,6 @@ async def run_embedded_ingest(provider, hub):
                                         }
                                     )
                                 elif which == "orderbook":
-                                    from app.providers.stockbit.mapping import (
-                                        map_legacy_orderbook_msg,
-                                    )
-
                                     b = map_legacy_orderbook_msg(wrapper.orderbook)
                                     if b:
                                         provider.live_feed().ingest_book(b)
@@ -268,10 +259,6 @@ async def run_embedded_ingest(provider, hub):
                                             }
                                         )
                                 elif which == "orderbook_body":
-                                    from app.providers.stockbit.mapping import (
-                                        map_orderbook_body_to_book,
-                                    )
-
                                     ob = wrapper.orderbook_body
                                     book = map_orderbook_body_to_book(
                                         ob.stock_symbol, ob.bid, ob.offer

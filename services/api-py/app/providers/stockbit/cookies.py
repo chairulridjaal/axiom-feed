@@ -18,10 +18,6 @@ def _get_cookies_path() -> Path:
     return Path(os.getenv("STOCKBIT_COOKIES_PATH", "./cookies.json"))
 
 
-AUTH_MODE = _get_auth_mode()
-COOKIES_PATH = _get_cookies_path()
-
-
 def load_cookies_array(path: Path | None = None) -> list[dict[str, Any]]:
     if path is None:
         path = _get_cookies_path()

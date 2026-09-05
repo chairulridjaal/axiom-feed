@@ -34,9 +34,9 @@ from .transport import get_transport, init_transport
 logger = logging.getLogger(__name__)
 
 try:
-    import pytz
+    from zoneinfo import ZoneInfo
 
-    _WIB_TZ = pytz.timezone("Asia/Jakarta")
+    _WIB_TZ = ZoneInfo("Asia/Jakarta")
 except Exception:
     _WIB_TZ = None
 
@@ -44,8 +44,6 @@ EXODUS = "https://exodus.stockbit.com"
 
 SLICE_DAILY = int(os.getenv("CANDLES_SLICE_DAILY_DAYS", "365"))
 SLICE_INTRADAY = int(os.getenv("CANDLES_SLICE_INTRADAY_DAYS", "90"))
-_raw_conc = int(os.getenv("CANDLES_CONCURRENCY", "4"))
-CONCURRENCY = max(1, min(8, _raw_conc))
 
 
 class LiveFeedState:
@@ -232,18 +230,17 @@ class StockbitProvider:
                     windows.append((cur, nxt))
                     cur = nxt + timedelta(days=1)
 
-                sem = asyncio.Semaphore(CONCURRENCY)
-
                 async def _fetch_daily_window(w_frm: date, w_to: date) -> list[Candle]:
+                    # Throttling lives in HttpxTransport (rate limiter + semaphore);
+                    # no second gate here.
                     url = f"{EXODUS}/chartbit/{symbol}/price/daily"
                     params = build_daily_params(w_frm, w_to)
                     out: list[Candle] = []
                     try:
-                        async with sem:
-                            async for d in self.transport.stream_json_array(url, params=params):
-                                c = map_candle_dict(d)
-                                if c:
-                                    out.append(c)
+                        async for d in self.transport.stream_json_array(url, params=params):
+                            c = map_candle_dict(d)
+                            if c:
+                                out.append(c)
                     except Exception as e:
                         logger.warning(f"daily candle window {w_frm}->{w_to} failed: {e}")
                     return out
@@ -292,7 +289,7 @@ class StockbitProvider:
                                     p = Decimal(val_str)
                                     ts = datetime.combine(d_obj, datetime.min.time())
                                     if _WIB_TZ:
-                                        ts = _WIB_TZ.localize(ts)
+                                        ts = ts.replace(tzinfo=_WIB_TZ)
                                     c = Candle(
                                         ts=ts,
                                         open=p,
@@ -320,18 +317,15 @@ class StockbitProvider:
             windows.append((cur, nxt))
             cur = nxt + timedelta(days=1)
 
-        sem = asyncio.Semaphore(CONCURRENCY)
-
         async def _fetch_window(w_from: date, w_to: date) -> list[Candle]:
             url = f"{EXODUS}/chartbit/{symbol}/price/intraday"
             params = build_intraday_params(w_from, w_to)
             out: list[Candle] = []
             try:
-                async with sem:
-                    async for d in self.transport.stream_json_array(url, params=params):
-                        c = map_candle_dict(d)
-                        if c:
-                            out.append(c)
+                async for d in self.transport.stream_json_array(url, params=params):
+                    c = map_candle_dict(d)
+                    if c:
+                        out.append(c)
             except Exception as e:
                 logger.warning(f"candle window {w_from}->{w_to} {resolution} failed: {e}")
             return out

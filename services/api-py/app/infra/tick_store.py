@@ -55,11 +55,14 @@ class TickStore:
         max_records: int = DEFAULT_MAX_RECORDS,
         batch_size: int = DEFAULT_BATCH_SIZE,
         flush_interval: float = DEFAULT_FLUSH_INTERVAL,
+        prune_interval: float = float(os.getenv("TICKS_PRUNE_INTERVAL", "300")),
     ) -> None:
         self.db_path = Path(db_path) if db_path is not None else DEFAULT_DB_PATH
         self.max_records = max_records
         self._batch_size = batch_size
         self._flush_interval = flush_interval
+        self._prune_interval = max(0.0, prune_interval)
+        self._last_prune = time.monotonic()
         self._pending: list[Trade] = []
         self._lock = threading.Lock()
         self._db_lock = threading.Lock()
@@ -125,6 +128,17 @@ class TickStore:
                 self._drain_pending()
                 return
             self._drain_pending()
+            if (
+                self._prune_interval > 0
+                and time.monotonic() - self._last_prune >= self._prune_interval
+            ):
+                self._last_prune = time.monotonic()
+                try:
+                    pruned = self.prune_old_records()
+                except Exception:
+                    pruned = 0
+                if pruned:
+                    logger.info(f"TickStore pruned {pruned} records (limit={self.max_records})")
 
     def _drain_pending(self) -> None:
         with self._lock:
@@ -138,13 +152,6 @@ class TickStore:
                     self._con.executemany(_INSERT_SQL, rows)
         except Exception as e:
             logger.debug(f"TickStore flush failed: {e}")
-
-    def _flush_locked(self) -> None:
-        """Legacy entry: caller holds _lock; hand batch to writer without blocking."""
-        if self._con is None or not self._pending:
-            return
-        if len(self._pending) >= self._batch_size:
-            self._flush_event.set()
 
     def flush(self, timeout: float = 5.0) -> None:
         """Block until pending rows are durable. Reads call this for read-your-writes."""
@@ -288,6 +295,7 @@ class TickStore:
         with self._db_lock:
             if self._con is not None:
                 try:
+                    self._con.execute("PRAGMA wal_checkpoint(TRUNCATE);")
                     self._con.close()
                 except Exception:
                     pass

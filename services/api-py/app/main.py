@@ -91,22 +91,15 @@ async def lifespan(app: FastAPI):
 
         return _cb
 
-    if ingest_mode == "direct":
-        from app.infra.bus import direct_ipc_consumer_task
-
-        ipc_host = os.getenv("DIRECT_IPC_HOST", "127.0.0.1")
-        ipc_port = int(os.getenv("DIRECT_IPC_PORT", "8379"))
-        consumer_task = asyncio.create_task(direct_ipc_consumer_task(hub, ipc_host, ipc_port))
-        consumer_task.add_done_callback(_log_task_exit("direct_ipc_consumer"))
-        logger.info(f"direct IPC consumer started for {ipc_host}:{ipc_port}")
-    elif ingest_mode == "redis" and redis_url:
+    if ingest_mode == "redis" and redis_url:
         from app.infra.bus import redis_consumer_task
 
         consumer_task = asyncio.create_task(redis_consumer_task(hub, redis_url))
         consumer_task.add_done_callback(_log_task_exit("redis_consumer"))
         logger.info(f"redis consumer started for {redis_url}")
     elif ingest_mode == "embedded":
-        # Launch embedded direct WebSocket feed
+        # Dev-only: local/no-Redis convenience. Production uses INGEST_MODE=redis
+        # (Rust ingest-rs → Redis Streams → scaled api-py replicas).
         try:
             from app.providers.stockbit.embedded_ingest import run_embedded_ingest
 

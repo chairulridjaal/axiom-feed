@@ -41,7 +41,7 @@ Responsible for API routing, historical chunking, factor analytics, and client W
   - `cache.py`: 50 MB bounded cache with tiered eviction.
   - `bus.py`: In-memory async message `Hub` with `Queue(100)` per-client drop-oldest buffers and 500 max client connection guardrail. `publish_batch(events)` fans out trade batches in one client pass with bulk eviction (newest window wins); serial `publish()` fast-path skips the dict copy when no private keys exist.
   - `tick_store.py`: SQLite WAL behind a dedicated daemon writer thread (`TICKS_FLUSH_INTERVAL=0.2`); inserts only append to `_pending` and signal, reads call blocking `flush()` for read-your-writes, `close()` joins the writer. Separate `_lock` (queue) / `_db_lock` (connection) so queries never race the writer.
-  - `archive.py`: One persistent in-memory DuckDB connection with read-only SQLite `ATTACH (TYPE SQLITE, READ_ONLY 1)` under an `RLock`; symbols/dates bound as parameters. Analytics routes (`api/v1/analytics.py`) run queries via `asyncio.to_thread` so a 90 ms scan never stalls the fan-out loop.
+  - `archive.py`: VWAP/flow via one SQLite aggregate over the tick store (no DuckDB). Analytics routes (`api/v1/analytics.py`) run queries via `asyncio.to_thread` so a scan never stalls the fan-out loop.
 ---
 
 ## 3. Memory & Concurrency Bounds

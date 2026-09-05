@@ -11,7 +11,7 @@ export const ProtoView: React.FC<ProtoViewProps> = ({ selectedSymbol }) => {
   const [msgType, setMsgType] = useState<'liveprice' | 'pipe' | 'body'>('liveprice');
   const [quote, setQuote] = useState<Quote | null>(null);
   const [book, setBook] = useState<Book | null>(null);
-  const [pipeInput, setPipeInput] = useState<string>('');
+  const [pipeSnapshot, setPipeSnapshot] = useState<string>('');
 
   useEffect(() => {
     let mounted = true;
@@ -28,7 +28,7 @@ export const ProtoView: React.FC<ProtoViewProps> = ({ selectedSymbol }) => {
           // Generate realistic pipe string from real book
           const bidParts = b.bids.slice(0, 5).map((l) => `${l.price};${l.lots};${parseInt(l.price || '0', 10) * l.lots * 100}`).join('|');
           const askParts = b.asks.slice(0, 5).map((l) => `${l.price};${l.lots};${parseInt(l.price || '0', 10) * l.lots * 100}`).join('|');
-          setPipeInput(`#O|${selectedSymbol}|BID|${bidParts}|OFFER|${askParts}`);
+          setPipeSnapshot(`#O|${selectedSymbol}|BID|${bidParts}|OFFER|${askParts}`);
         }
       }
     };
@@ -124,13 +124,11 @@ export const ProtoView: React.FC<ProtoViewProps> = ({ selectedSymbol }) => {
         <div className="space-y-4">
           <div className="border border-[#202020] bg-[#111111] p-4 rounded-[2px]">
             <div className="text-[#b4b4b4] text-[12px] pb-2.5 border-b border-[#202020] mb-3 font-bold">
-              Legacy #O Pipe Parser (mapping.py:33-78)
+              Legacy #O Pipe Snapshot (mapping.py:parse_legacy_orderbook_pipe)
             </div>
-            <textarea
-              value={pipeInput}
-              onChange={(e) => setPipeInput(e.target.value)}
-              className="w-full h-24 bg-[#000000] border border-[#202020] p-3 text-[12px] text-[#eeeeee] outline-none rounded-[2px] font-mono focus:border-[#da5c2c]"
-            />
+            <pre className="text-[#eeeeee] text-[12px] overflow-x-auto whitespace-pre-wrap">
+              {pipeSnapshot || '(no book data)'}
+            </pre>
           </div>
 
           <div className="border border-[#202020] bg-[#111111] p-4 rounded-[2px]">

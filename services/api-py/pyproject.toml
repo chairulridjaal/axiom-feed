@@ -13,11 +13,7 @@ dependencies = [
   "redis>=5",
   "tenacity>=9",
   "python-dotenv>=1",
-  "anyio>=4",
-  "pytz>=2026.3.post1",
-  "python-multipart>=0.0.32",
-  "grpcio-tools>=1.83.1",
-  "duckdb>=1.5.5",
+  "tzdata>=2024.1",
 ]
 
 [dependency-groups]
@@ -27,6 +23,7 @@ dev = [
   "ruff>=0.11",
   "httpx",
   "pyright>=1.1",
+  "grpcio-tools>=1.83.1",
 ]
 
 [tool.ruff]

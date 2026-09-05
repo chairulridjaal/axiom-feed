@@ -24,41 +24,54 @@ async def get_insider_movements(
     source_type: str = Query("SOURCE_TYPE_UNSPECIFIED", description="Filing source filter"),
 ) -> dict[str, Any]:
     """Retrieve daily substantial shareholder (>= 5%) buy/sell transactions filed across IDX."""
-    p = get_provider()
-    try:
-        data = await p.insider_majorholders(
-            date_start=date_start,
-            date_end=date_end,
-            page=page,
-            limit=limit,
-            action_type=action_type,
-            source_type=source_type,
-        )
-        raw_data = data.get("data") if isinstance(data, dict) else data
-        return {
-            "date_start": date_start,
-            "date_end": date_end,
-            "page": page,
-            "limit": limit,
-            "data": raw_data,
-        }
-    except Exception as e:
-        raise HTTPException(502, f"Failed to fetch insider movements: {e}")
+    from app.infra.upstream_cache import cached_json
+
+    async def _produce():
+        p = get_provider()
+        try:
+            data = await p.insider_majorholders(
+                date_start=date_start,
+                date_end=date_end,
+                page=page,
+                limit=limit,
+                action_type=action_type,
+                source_type=source_type,
+            )
+            raw_data = data.get("data") if isinstance(data, dict) else data
+            return {
+                "date_start": date_start,
+                "date_end": date_end,
+                "page": page,
+                "limit": limit,
+                "data": raw_data,
+            }
+        except Exception as e:
+            raise HTTPException(502, f"Failed to fetch insider movements: {e}")
+
+    return await cached_json(
+        f"default:insider:{date_start}:{date_end}:{page}:{limit}:{action_type}:{source_type}",
+        _produce,
+    )
 
 
 @router.get("/v1/companies/{symbol}/shareholders")
 async def get_shareholding_composition(symbol: str) -> dict[str, Any]:
     """Retrieve structured shareholder composition (controller, institutional, public, management)."""
-    p = get_provider()
-    try:
-        data = await p.shareholding_composition(symbol)
-        raw_data = data.get("data") if isinstance(data, dict) else data
-        return {
-            "symbol": symbol.upper(),
-            "composition": raw_data,
-        }
-    except Exception as e:
-        raise HTTPException(502, f"Failed to fetch shareholding composition for {symbol}: {e}")
+    from app.infra.upstream_cache import cached_json
+
+    async def _produce():
+        p = get_provider()
+        try:
+            data = await p.shareholding_composition(symbol)
+            raw_data = data.get("data") if isinstance(data, dict) else data
+            return {
+                "symbol": symbol.upper(),
+                "composition": raw_data,
+            }
+        except Exception as e:
+            raise HTTPException(502, f"Failed to fetch shareholding composition for {symbol}: {e}")
+
+    return await cached_json(f"default:shareholders:{symbol.upper()}", _produce)
 
 
 @router.get("/v1/companies/{symbol}/shareholders/trend")
@@ -67,14 +80,19 @@ async def get_shareholders_trend(
     value_year: int = Query(12, description="Months of historical breakdown (e.g. 12, 24, 36)"),
 ) -> dict[str, Any]:
     """Retrieve multi-year monthly/quarterly shareholder progression and changes."""
-    p = get_provider()
-    try:
-        data = await p.shareholders_chart(symbol, value_year=value_year)
-        raw_data = data.get("data") if isinstance(data, dict) else data
-        return {
-            "symbol": symbol.upper(),
-            "value_year": value_year,
-            "trend": raw_data,
-        }
-    except Exception as e:
-        raise HTTPException(502, f"Failed to fetch shareholders trend for {symbol}: {e}")
+    from app.infra.upstream_cache import cached_json
+
+    async def _produce():
+        p = get_provider()
+        try:
+            data = await p.shareholders_chart(symbol, value_year=value_year)
+            raw_data = data.get("data") if isinstance(data, dict) else data
+            return {
+                "symbol": symbol.upper(),
+                "value_year": value_year,
+                "trend": raw_data,
+            }
+        except Exception as e:
+            raise HTTPException(502, f"Failed to fetch shareholders trend for {symbol}: {e}")
+
+    return await cached_json(f"default:shareholders:{symbol.upper()}:trend:{value_year}", _produce)

@@ -1,9 +1,8 @@
 #![allow(dead_code, clippy::all)]
-//! hub — fanout to api-py via Redis Streams, plus local broadcast.
-
+//! hub — fanout to api-py via Redis Streams (sole production output path).
 use std::sync::Arc;
 use tokio::sync::broadcast;
-use tracing::{info, warn};
+use tracing::warn;
 
 #[derive(Clone)]
 pub struct Hub {
@@ -52,50 +51,27 @@ pub async fn redis_publisher_task(hub: Arc<Hub>, redis_url: String) {
                     }
                 }
 
-                if batch.len() == 1 {
-                    let res: Result<String, _> = redis::cmd("XADD")
+                // One pipeline path handles any batch size; single-XADD branch merged.
+                let mut pipe = redis::pipe();
+                for item in &batch {
+                    pipe.cmd("XADD")
                         .arg("axiom.events")
                         .arg("MAXLEN")
                         .arg("~")
                         .arg("1000")
                         .arg("*")
                         .arg("payload")
-                        .arg(&batch[0])
-                        .query_async(&mut con)
-                        .await;
-                    if let Err(e) = res {
-                        warn!("XADD failed: {} — reconnecting redis", e);
-                        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                        match client.get_multiplexed_async_connection().await {
-                            Ok(c) => con = c,
-                            Err(e2) => {
-                                warn!("redis reconnect failed: {}", e2);
-                                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                            }
-                        }
-                    }
-                } else {
-                    let mut pipe = redis::pipe();
-                    for item in &batch {
-                        pipe.cmd("XADD")
-                            .arg("axiom.events")
-                            .arg("MAXLEN")
-                            .arg("~")
-                            .arg("1000")
-                            .arg("*")
-                            .arg("payload")
-                            .arg(item);
-                    }
-                    let res: Result<(), _> = pipe.query_async(&mut con).await;
-                    if let Err(e) = res {
-                        warn!("Pipeline XADD failed: {} — reconnecting redis", e);
-                        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                        match client.get_multiplexed_async_connection().await {
-                            Ok(c) => con = c,
-                            Err(e2) => {
-                                warn!("redis reconnect failed: {}", e2);
-                                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                            }
+                        .arg(item);
+                }
+                let res: Result<(), _> = pipe.query_async(&mut con).await;
+                if let Err(e) = res {
+                    warn!("Pipeline XADD failed: {} — reconnecting redis", e);
+                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                    match client.get_multiplexed_async_connection().await {
+                        Ok(c) => con = c,
+                        Err(e2) => {
+                            warn!("redis reconnect failed: {}", e2);
+                            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                         }
                     }
                 }
@@ -105,109 +81,6 @@ pub async fn redis_publisher_task(hub: Arc<Hub>, redis_url: String) {
                 warn!("hub lagged {} messages — drop-oldest active", n);
             }
             Err(broadcast::error::RecvError::Closed) => break,
-        }
-    }
-}
-
-pub async fn publisher_task(_hub: Arc<Hub>) {
-    info!("in-memory hub publisher idle (use redis_publisher_task for Streams)");
-    std::future::pending::<()>().await;
-}
-
-pub async fn direct_ipc_server_task(hub: Arc<Hub>, bind_addr: String) {
-    use tokio::net::TcpListener;
-
-    let listener = match TcpListener::bind(&bind_addr).await {
-        Ok(l) => {
-            info!("direct IPC server listening on {}", bind_addr);
-            l
-        }
-        Err(e) => {
-            warn!(
-                "direct IPC server bind failed on {}: {} — skipping direct IPC",
-                bind_addr, e
-            );
-            return;
-        }
-    };
-
-    loop {
-        match listener.accept().await {
-            Ok((mut socket, peer)) => {
-                info!("direct IPC client connected from {}", peer);
-                let _ = socket.set_nodelay(true);
-                let mut rx = hub.sender().subscribe();
-                tokio::spawn(async move {
-                    use tokio::io::AsyncWriteExt;
-                    let (mut _reader, mut writer) = socket.split();
-                    let mut buf = Vec::with_capacity(64 * 1024);
-                    let mut pending: usize = 0;
-                    // Batch up to 64 queued events per writev; flush on empty queue
-                    // or every 2 ms so p99 latency never waits for a full batch.
-                    let flush_every = tokio::time::Duration::from_millis(2);
-                    let mut last_flush = tokio::time::Instant::now();
-                    loop {
-                        match rx.try_recv() {
-                            Ok(msg) => {
-                                buf.extend_from_slice(msg.as_bytes());
-                                buf.push(b'\n');
-                                pending += 1;
-                                if pending >= 64 {
-                                    if writer.write_all(&buf).await.is_err() {
-                                        break;
-                                    }
-                                    buf.clear();
-                                    pending = 0;
-                                    last_flush = tokio::time::Instant::now();
-                                }
-                                continue;
-                            }
-                            Err(tokio::sync::broadcast::error::TryRecvError::Empty) => {}
-                            Err(_) => break,
-                        }
-                        if pending > 0 && last_flush.elapsed() >= flush_every {
-                            if writer.write_all(&buf).await.is_err() {
-                                break;
-                            }
-                            buf.clear();
-                            pending = 0;
-                            last_flush = tokio::time::Instant::now();
-                            continue;
-                        }
-                        match tokio::time::timeout(flush_every, rx.recv()).await {
-                            Ok(Ok(msg)) => {
-                                buf.extend_from_slice(msg.as_bytes());
-                                buf.push(b'\n');
-                                pending += 1;
-                                if pending >= 64 {
-                                    if writer.write_all(&buf).await.is_err() {
-                                        break;
-                                    }
-                                    buf.clear();
-                                    pending = 0;
-                                    last_flush = tokio::time::Instant::now();
-                                }
-                            }
-                            Ok(Err(_)) => break,
-                            Err(_) => {
-                                if pending > 0 {
-                                    if writer.write_all(&buf).await.is_err() {
-                                        break;
-                                    }
-                                    buf.clear();
-                                    pending = 0;
-                                    last_flush = tokio::time::Instant::now();
-                                }
-                            }
-                        }
-                    }
-                    info!("direct IPC client disconnected {}", peer);
-                });
-            }
-            Err(e) => {
-                warn!("direct IPC accept error: {}", e);
-                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-            }
         }
     }
 }

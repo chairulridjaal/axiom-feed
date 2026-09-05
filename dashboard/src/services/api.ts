@@ -44,21 +44,11 @@ export function setStoredApiKey(key: string): void {
   }
 }
 
-function getUrlCandidates(targetUrl: string): string[] {
+function getApiBase(targetUrl: string): string {
+  // Vite proxies /v1 in dev; same-origin in prod. One base, no candidate fan-out.
   const clean = targetUrl.replace(/\/$/, '');
-  const list = [clean];
-
-  if (clean.includes('localhost')) {
-    list.push(clean.replace('localhost', '127.0.0.1'));
-  } else if (clean.includes('127.0.0.1')) {
-    list.push(clean.replace('127.0.0.1', 'localhost'));
-  }
-
-  if (clean.includes('8000') || clean.includes('localhost') || clean.includes('127.0.0.1')) {
-    list.push(''); // relative proxy
-  }
-
-  return Array.from(new Set(list));
+  if (!clean || clean.includes('localhost') || clean.includes('127.0.0.1') || clean.includes(':8000')) return '';
+  return clean;
 }
 
 function buildHeaders(): Record<string, string> {
@@ -68,33 +58,35 @@ function buildHeaders(): Record<string, string> {
   return headers;
 }
 
+async function apiFetch(path: string, baseUrl: string, init?: RequestInit): Promise<Response | null> {
+  const base = getApiBase(baseUrl);
+  try {
+    const res = await fetch(`${base}${path}`, { ...init, headers: { ...buildHeaders(), ...((init?.headers as Record<string, string>) || {}) } });
+    return res;
+  } catch {
+    return null;
+  }
+}
+
 export async function checkBackendHealth(baseUrl: string = getStoredBackendUrl()): Promise<{
   isLive: boolean;
   data?: HealthState;
   error?: string;
   connectedUrl?: string;
 }> {
-  const candidates = getUrlCandidates(baseUrl);
-  const headers = buildHeaders();
-  let lastError = 'Unable to connect to backend';
-
-  for (const base of candidates) {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3000);
-      const res = await fetch(`${base}/v1/health`, { headers, signal: controller.signal });
-      clearTimeout(timeoutId);
-
-      if (res.ok) {
-        const data = await res.json();
-        return { isLive: true, data, connectedUrl: base || 'Vite Proxy' };
-      }
-    } catch (e: any) {
-      lastError = e.message || 'Connection failed';
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    const res = await apiFetch(`/v1/health`, baseUrl, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    if (res?.ok) {
+      const data = await res.json();
+      return { isLive: true, data, connectedUrl: getApiBase(baseUrl) || 'Vite Proxy' };
     }
+  } catch (e: any) {
+    return { isLive: false, error: e.message || 'Connection failed' };
   }
-
-  return { isLive: false, error: lastError };
+  return { isLive: false, error: 'Unable to connect to backend' };
 }
 
 export async function fetchLiveTrades(
@@ -102,13 +94,10 @@ export async function fetchLiveTrades(
   limit: number = 50,
   baseUrl: string = getStoredBackendUrl()
 ): Promise<Trade[]> {
-  const candidates = getUrlCandidates(baseUrl);
-  const headers = buildHeaders();
-
-  for (const base of candidates) {
-    try {
-      const res = await fetch(`${base}/v1/trades?symbols=${symbol.toUpperCase()}&limit=${limit}`, { headers });
-      if (res.ok) {
+  
+  try {
+      const res = await apiFetch(`/v1/trades?symbols=${symbol.toUpperCase()}&limit=${limit}`, baseUrl);
+      if (res?.ok) {
         const data = await res.json();
         const raw = Array.isArray(data) ? data : data.trades || [];
         return raw.map((t: any, i: number) => ({
@@ -130,14 +119,11 @@ export async function fetchLiveTrades(
 }
 
 export async function fetchLiveQuote(symbol: string, baseUrl: string = getStoredBackendUrl()): Promise<Quote | null> {
-  const candidates = getUrlCandidates(baseUrl);
-  const headers = buildHeaders();
-  const sym = symbol.toUpperCase();
+    const sym = symbol.toUpperCase();
 
-  for (const base of candidates) {
-    try {
-      const res = await fetch(`${base}/v1/quotes/${sym}`, { headers });
-      if (res.ok) {
+  try {
+      const res = await apiFetch(`/v1/quotes/${sym}`, baseUrl);
+      if (res?.ok) {
         const data = await res.json();
         const q = data.quote;
         if (q) {
@@ -170,8 +156,8 @@ export async function fetchLiveQuote(symbol: string, baseUrl: string = getStored
     } catch {}
 
     try {
-      const res = await fetch(`${base}/v1/companies/${sym}`, { headers });
-      if (res.ok) {
+      const res = await apiFetch(`/v1/companies/${sym}`, baseUrl);
+      if (res?.ok) {
         const data = await res.json();
         const d = data.data || {};
         return {
@@ -191,14 +177,11 @@ export async function fetchLiveQuote(symbol: string, baseUrl: string = getStored
 }
 
 export async function fetchLiveBook(symbol: string, baseUrl: string = getStoredBackendUrl()): Promise<Book | null> {
-  const candidates = getUrlCandidates(baseUrl);
-  const headers = buildHeaders();
-  const sym = symbol.toUpperCase();
+    const sym = symbol.toUpperCase();
 
-  for (const base of candidates) {
-    try {
-      const res = await fetch(`${base}/v1/books/${sym}`, { headers });
-      if (res.ok) {
+  try {
+      const res = await apiFetch(`/v1/books/${sym}`, baseUrl);
+      if (res?.ok) {
         const data = await res.json();
         if (data.book && (data.book.bids?.length > 0 || data.book.asks?.length > 0)) {
           return {
@@ -219,8 +202,8 @@ export async function fetchLiveBook(symbol: string, baseUrl: string = getStoredB
     } catch {}
 
     try {
-      const res = await fetch(`${base}/v1/books/snapshot/${sym}`, { headers });
-      if (res.ok) {
+      const res = await apiFetch(`/v1/books/snapshot/${sym}`, baseUrl);
+      if (res?.ok) {
         const data = await res.json();
         const snap = data.snapshot?.data?.tradebook || data.snapshot?.data || {};
         const bids: any[] = [];
@@ -263,17 +246,11 @@ export async function fetchLiveCandles(
   resolution: 'daily' | 'minute',
   baseUrl: string = getStoredBackendUrl()
 ): Promise<Candle[]> {
-  const candidates = getUrlCandidates(baseUrl);
-  const headers = buildHeaders();
-  const sym = symbol.toUpperCase();
+    const sym = symbol.toUpperCase();
 
-  for (const base of candidates) {
-    try {
-      const res = await fetch(
-        `${base}/v1/candles/${sym}?from=${from}&to=${to}&resolution=${resolution}`,
-        { headers }
-      );
-      if (res.ok) {
+  try {
+      const res = await apiFetch(`/v1/candles/${sym}?from=${from}&to=${to}&resolution=${resolution}`, baseUrl);
+      if (res?.ok) {
         const text = await res.text();
         const lines = text.split('\n').filter((l) => l.trim());
         const candles: Candle[] = [];
@@ -302,13 +279,10 @@ export async function fetchLiveCandles(
 }
 
 export async function fetchPricePerformance(symbol: string, baseUrl: string = getStoredBackendUrl()): Promise<any[]> {
-  const candidates = getUrlCandidates(baseUrl);
-  const headers = buildHeaders();
-
-  for (const base of candidates) {
-    try {
-      const res = await fetch(`${base}/v1/charts/${symbol.toUpperCase()}/performance`, { headers });
-      if (res.ok) {
+  
+  try {
+      const res = await apiFetch(`/v1/charts/${symbol.toUpperCase()}/performance`, baseUrl);
+      if (res?.ok) {
         const data = await res.json();
         return data.performance?.prices || [];
       }
@@ -321,13 +295,10 @@ export async function fetchMarketMovers(
   kind: string = 'top_gainers',
   baseUrl: string = getStoredBackendUrl()
 ): Promise<MoverItem[]> {
-  const candidates = getUrlCandidates(baseUrl);
-  const headers = buildHeaders();
-
-  for (const base of candidates) {
-    try {
-      const res = await fetch(`${base}/v1/market/movers?kind=${kind}`, { headers });
-      if (res.ok) {
+  
+  try {
+      const res = await apiFetch(`/v1/market/movers?kind=${kind}`, baseUrl);
+      if (res?.ok) {
         const data = await res.json();
         const list = Array.isArray(data.movers) ? data.movers : [];
         return list.map((m: any) => {
@@ -349,13 +320,10 @@ export async function fetchMarketMovers(
 }
 
 export async function fetchBrokersTop(baseUrl: string = getStoredBackendUrl()): Promise<BrokerItem[]> {
-  const candidates = getUrlCandidates(baseUrl);
-  const headers = buildHeaders();
-
-  for (const base of candidates) {
-    try {
-      const res = await fetch(`${base}/v1/brokers/top`, { headers });
-      if (res.ok) {
+  
+  try {
+      const res = await apiFetch(`/v1/brokers/top`, baseUrl);
+      if (res?.ok) {
         const data = await res.json();
         const list = data.brokers?.data?.list || [];
         if (Array.isArray(list) && list.length > 0) {
@@ -393,15 +361,12 @@ export async function fetchBrokerSummary(
   frm?: string,
   to?: string
 ): Promise<BrokerSummary | null> {
-  const candidates = getUrlCandidates(baseUrl);
-  const headers = buildHeaders();
-  const sym = symbol.toUpperCase();
+    const sym = symbol.toUpperCase();
   const qs = frm || to ? `?from=${frm || ''}&to=${to || frm || ''}` : '';
 
-  for (const base of candidates) {
-    try {
-      const res = await fetch(`${base}/v1/brokers/summary/${sym}${qs}`, { headers });
-      if (res.ok) {
+  try {
+      const res = await apiFetch(`/v1/brokers/summary/${sym}${qs}`, baseUrl);
+      if (res?.ok) {
         const data = await res.json();
         const bdData = data.data?.data || {};
         const detector = bdData.bandar_detector || {};
@@ -436,13 +401,10 @@ export async function fetchBrokerSummary(
 }
 
 export async function fetchBrokerTopStocks(baseUrl: string = getStoredBackendUrl()): Promise<any> {
-  const candidates = getUrlCandidates(baseUrl);
-  const headers = buildHeaders();
-
-  for (const base of candidates) {
-    try {
-      const res = await fetch(`${base}/v1/brokers/top-stocks`, { headers });
-      if (res.ok) {
+  
+  try {
+      const res = await apiFetch(`/v1/brokers/top-stocks`, baseUrl);
+      if (res?.ok) {
         const data = await res.json();
         const topBuy = data.stocks?.data?.top_buy || [];
         const topSell = data.stocks?.data?.top_sell || [];
@@ -459,14 +421,11 @@ export async function fetchBrokerActivity(
   frm?: string,
   to?: string
 ): Promise<any> {
-  const candidates = getUrlCandidates(baseUrl);
-  const headers = buildHeaders();
-  const qs = frm || to ? `?from=${frm || ''}&to=${to || frm || ''}` : '';
+    const qs = frm || to ? `?from=${frm || ''}&to=${to || frm || ''}` : '';
 
-  for (const base of candidates) {
-    try {
-      const res = await fetch(`${base}/v1/brokers/${brokerCode.toUpperCase()}/activity${qs}`, { headers });
-      if (res.ok) {
+  try {
+      const res = await apiFetch(`/v1/brokers/${brokerCode.toUpperCase()}/activity${qs}`, baseUrl);
+      if (res?.ok) {
         const data = await res.json();
         const adata = data.activity?.data || {};
         const summary = adata.broker_summary || {};
@@ -493,13 +452,10 @@ export async function fetchBrokerActivity(
 }
 
 export async function fetchSectors(baseUrl: string = getStoredBackendUrl()): Promise<SectorItem[]> {
-  const candidates = getUrlCandidates(baseUrl);
-  const headers = buildHeaders();
-
-  for (const base of candidates) {
-    try {
-      const res = await fetch(`${base}/v1/sectors`, { headers });
-      if (res.ok) {
+  
+  try {
+      const res = await apiFetch(`/v1/sectors`, baseUrl);
+      if (res?.ok) {
         const data = await res.json();
         const list = Array.isArray(data.sectors) ? data.sectors : [];
         return list.map((s: any) => ({
@@ -519,13 +475,10 @@ export async function fetchSubsectors(
   sectorId: string,
   baseUrl: string = getStoredBackendUrl()
 ): Promise<SubsectorItem[]> {
-  const candidates = getUrlCandidates(baseUrl);
-  const headers = buildHeaders();
-
-  for (const base of candidates) {
-    try {
-      const res = await fetch(`${base}/v1/sectors/${sectorId}/subsectors`, { headers });
-      if (res.ok) {
+  
+  try {
+      const res = await apiFetch(`/v1/sectors/${sectorId}/subsectors`, baseUrl);
+      if (res?.ok) {
         const data = await res.json();
         const list = Array.isArray(data.subsectors) ? data.subsectors : [];
         return list.map((sub: any) => ({
@@ -544,13 +497,10 @@ export async function fetchSectorCompanies(
   subsectorId: string,
   baseUrl: string = getStoredBackendUrl()
 ): Promise<SectorCompany[]> {
-  const candidates = getUrlCandidates(baseUrl);
-  const headers = buildHeaders();
-
-  for (const base of candidates) {
-    try {
-      const res = await fetch(`${base}/v1/sectors/${sectorId}/subsectors/${subsectorId}/companies`, { headers });
-      if (res.ok) {
+  
+  try {
+      const res = await apiFetch(`/v1/sectors/${sectorId}/subsectors/${subsectorId}/companies`, baseUrl);
+      if (res?.ok) {
         const data = await res.json();
         const list = Array.isArray(data.companies) ? data.companies : [];
         return list.map((c: any) => ({
@@ -572,14 +522,11 @@ export async function fetchFundamentals(
   symbol: string,
   baseUrl: string = getStoredBackendUrl()
 ): Promise<KeyStats | null> {
-  const candidates = getUrlCandidates(baseUrl);
-  const headers = buildHeaders();
-  const sym = symbol.toUpperCase();
+    const sym = symbol.toUpperCase();
 
-  for (const base of candidates) {
-    try {
-      const res = await fetch(`${base}/v1/fundamentals/${sym}`, { headers });
-      if (res.ok) {
+  try {
+      const res = await apiFetch(`/v1/fundamentals/${sym}`, baseUrl);
+      if (res?.ok) {
         const data = await res.json();
         const ksData = data.key_stats?.data || {};
         const stats = ksData.stats || {};
@@ -630,16 +577,10 @@ export async function fetchFinancials(
   statementType: number = 1,
   baseUrl: string = getStoredBackendUrl()
 ): Promise<any | null> {
-  const candidates = getUrlCandidates(baseUrl);
-  const headers = buildHeaders();
-
-  for (const base of candidates) {
-    try {
-      const res = await fetch(
-        `${base}/v1/fundamentals/${symbol.toUpperCase()}/financials?data_type=1&report_type=${reportType}&statement_type=${statementType}`,
-        { headers }
-      );
-      if (res.ok) {
+  
+  try {
+      const res = await apiFetch(`/v1/fundamentals/${symbol.toUpperCase()}/financials?data_type=1&report_type=${reportType}&statement_type=${statementType}`, baseUrl);
+      if (res?.ok) {
         return await res.json();
       }
     } catch {}
@@ -651,14 +592,11 @@ export async function fetchCompanyProfile(
   symbol: string,
   baseUrl: string = getStoredBackendUrl()
 ): Promise<CompanyProfile | null> {
-  const candidates = getUrlCandidates(baseUrl);
-  const headers = buildHeaders();
-  const sym = symbol.toUpperCase();
+    const sym = symbol.toUpperCase();
 
-  for (const base of candidates) {
-    try {
-      const res = await fetch(`${base}/v1/companies/${sym}/profile`, { headers });
-      if (res.ok) {
+  try {
+      const res = await apiFetch(`/v1/companies/${sym}/profile`, baseUrl);
+      if (res?.ok) {
         const data = await res.json();
         const profile = data.profile || {};
         const address = Array.isArray(profile.address) && profile.address[0] ? profile.address[0] : {};
@@ -685,13 +623,10 @@ export async function fetchCompanySubsidiaries(
   symbol: string,
   baseUrl: string = getStoredBackendUrl()
 ): Promise<any[]> {
-  const candidates = getUrlCandidates(baseUrl);
-  const headers = buildHeaders();
-
-  for (const base of candidates) {
-    try {
-      const res = await fetch(`${base}/v1/companies/${symbol.toUpperCase()}/subsidiaries`, { headers });
-      if (res.ok) {
+  
+  try {
+      const res = await apiFetch(`/v1/companies/${symbol.toUpperCase()}/subsidiaries`, baseUrl);
+      if (res?.ok) {
         const data = await res.json();
         return data.subsidiaries || [];
       }
@@ -704,13 +639,10 @@ export async function fetchCalendars(
   type: string = 'dividend',
   baseUrl: string = getStoredBackendUrl()
 ): Promise<any> {
-  const candidates = getUrlCandidates(baseUrl);
-  const headers = buildHeaders();
-
-  for (const base of candidates) {
-    try {
-      const res = await fetch(`${base}/v1/calendars/${type}`, { headers });
-      if (res.ok) {
+  
+  try {
+      const res = await apiFetch(`/v1/calendars/${type}`, baseUrl);
+      if (res?.ok) {
         const data = await res.json();
         return data.data || null;
       }
@@ -723,13 +655,10 @@ export async function fetchCompanyActions(
   symbol: string,
   baseUrl: string = getStoredBackendUrl()
 ): Promise<any[]> {
-  const candidates = getUrlCandidates(baseUrl);
-  const headers = buildHeaders();
-
-  for (const base of candidates) {
-    try {
-      const res = await fetch(`${base}/v1/calendars/companies/${symbol.toUpperCase()}/actions?limit=30`, { headers });
-      if (res.ok) {
+  
+  try {
+      const res = await apiFetch(`/v1/calendars/companies/${symbol.toUpperCase()}/actions?limit=30`, baseUrl);
+      if (res?.ok) {
         const data = await res.json();
         return data.actions || [];
       }
@@ -744,20 +673,14 @@ export async function fetchSeasonality(
   backYear: number = 5,
   baseUrl: string = getStoredBackendUrl()
 ): Promise<any> {
-  const candidates = getUrlCandidates(baseUrl);
-  const headers = buildHeaders();
-
-  for (const base of candidates) {
-    try {
-      const res = await fetch(`${base}/v1/seasonality/${symbol.toUpperCase()}?year=${year}&back_year=${backYear}`, {
-        headers,
-      });
-      if (res.ok) {
-        const data = await res.json();
-        return data.data?.data || null;
-      }
-    } catch {}
-  }
+  
+  try {
+    const res = await apiFetch(`/v1/seasonality/${symbol.toUpperCase()}?year=${year}&back_year=${backYear}`, baseUrl);
+    if (res?.ok) {
+      const data = await res.json();
+      return data.data?.data || null;
+    }
+  } catch {}
   return null;
 }
 

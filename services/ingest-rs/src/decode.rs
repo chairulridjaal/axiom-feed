@@ -57,15 +57,6 @@ pub fn decompress_into(bytes: &[u8], out: &mut Vec<u8>) -> bool {
     true
 }
 
-pub fn decompress(bytes: &[u8]) -> Vec<u8> {
-    if bytes.is_empty() {
-        return Vec::new();
-    }
-    let mut out = Vec::with_capacity(bytes.len().saturating_mul(4).max(2048));
-    decompress_into(bytes, &mut out);
-    out
-}
-
 fn try_zlib_into(d: &[u8], out: &mut Vec<u8>) -> Result<(), std::io::Error> {
     out.clear();
     let mut dec = ZlibDecoder::new(d);
@@ -78,20 +69,6 @@ fn try_deflate_into(d: &[u8], out: &mut Vec<u8>) -> Result<(), std::io::Error> {
     let mut dec = DeflateDecoder::new(d);
     dec.read_to_end(out)?;
     Ok(())
-}
-
-fn try_zlib(d: &[u8]) -> Result<Vec<u8>, std::io::Error> {
-    let mut dec = ZlibDecoder::new(d);
-    let mut out = Vec::with_capacity(d.len().saturating_mul(4).max(512));
-    dec.read_to_end(&mut out)?;
-    Ok(out)
-}
-
-fn try_deflate(d: &[u8]) -> Result<Vec<u8>, std::io::Error> {
-    let mut dec = DeflateDecoder::new(d);
-    let mut out = Vec::with_capacity(d.len().saturating_mul(4).max(512));
-    dec.read_to_end(&mut out)?;
-    Ok(out)
 }
 
 #[derive(Debug, Clone)]
@@ -364,9 +341,9 @@ mod tests {
     }
 
     #[test]
-    fn test_decompress_empty() {
-        let v = decompress(b"");
-        assert_eq!(v, b"");
+    fn test_decompress_into_empty() {
+        let mut out = Vec::new();
+        assert!(!decompress_into(b"", &mut out));
     }
 
     #[test]

@@ -4,12 +4,20 @@ Use this file to track engineering chronology, operational actions, and empirica
 
 ---
 
+### 2026-09-05 WIB — refactor-redis-only-ingest-sqlite-cache-aside
+- **Objective**: Cut direct-IPC transport, replace DuckDB/Parquet with SQLite analytics, and put every upstream REST route behind one cache-aside layer.
+- **Context**: Three ingest paths (embedded/redis/direct) with Rust always running both outputs; `DuckDBArchive` + Parquet export (~30MB dep) had no downstream consumer; only candles had cache/singleflight while ~35 upstream routes hit Stockbit unguarded; provider stacked a second semaphore over the transport gate.
+- **Changes**: `ingest-rs` Redis-Streams-only (direct-IPC server + dead `publisher_task`/`subscribe()`/`decompress()` cut, XADD branches collapsed, `http`/`url`/`bytes` dropped); new `infra/upstream_cache.py` (`cached_json` + singleflight) wired into all 38 upstream REST routes with existing tiers + new `seasonality:86400`, `trades:running:10s` keys on `default:60s` pending hit-rate data; `archive.py` → `SQLiteArchive` one-query VWAP/flow; `TickStore` periodic prune (`TICKS_PRUNE_INTERVAL=300`) + WAL checkpoint on close; provider semaphore removed (transport is the single gate); `pytz`→`zoneinfo` (+`tzdata`); dashboard `apiFetch` replaces candidate fan-out, dead components/deps/proxies cut; `.env.example` stale vars removed.
+- **Proof**: `pytest` 44/44, `cargo test` 7/7, `ruff check` + `format --check` + `cargo fmt --check` + `clippy -D warnings` green; live `bench/verify_live_upstream.py` 25/25 PASS; cache smoke 37/37 repeat-call hits; regex-vs-HTMLParser bench 5.5x confirms regex-first order.
+- **State**: Operational.
+
+---
+
 ### 2026-09-05 WIB — fix-auth-single-use-rotation
 - **Objective**: Make silent refresh survive Stockbit's single-use refresh-token rotation across processes and login-script runs.
 - **Context**: Stored refresh token 401'd despite 7-day JWT validity — bearer iat lagged refresh iat by 14 min, proving the stored token was already spent server-side (rotation retires on every use). Gaps: no adopt-before-spend, `_find_env_file` fallback pointed at `services/.env` (parents[4], should be parents[5]), transport retried with stale client headers when no lifespan callback wired.
 - **Changes**: `refresh_tokens_via_stockbit` re-reads `.env` under lock and adopts newer file tokens before spending; fixed env fallback to repo root; `get_json`/`post_json` call `update_bearer` directly after on-demand refresh. Tests: 2 new cases (adopt-newer, hot-swap) in `tests/test_auth_rotation.py`.
 - **Proof**: `pytest` 44/44, `ruff check` + `format --check` clean. Live proof 2026-09-05: fresh 7-day refresh token (168h) rotated twice in a row — new 24h bearer verified upstream (`user_id 579640`), rotated pair persisted to `.env`, second rotation with the new refresh token also minted a fresh bearer. Chain rotation works. (Redis publish warnings benign — no local Redis.)
-- **State**: Operational.
 
 ---
 

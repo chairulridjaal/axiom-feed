@@ -223,3 +223,179 @@ def test_trades_running_endpoint(monkeypatch):
     r = client.get("/v1/trades/running/snapshot")
     assert r.status_code == 200
     assert "running_trades" in r.json()
+
+
+def test_market_microstructure_endpoints(monkeypatch):
+    p = get_provider()
+    monkeypatch.setattr(
+        p, "market_session", AsyncMock(return_value={"data": {"detail": {"regular": {}}}})
+    )
+    monkeypatch.setattr(p, "order_queue", AsyncMock(return_value={"data": {"orders": []}}))
+    monkeypatch.setattr(
+        p,
+        "running_trade_chart",
+        AsyncMock(
+            return_value={
+                "data": {
+                    "from": "2026-09-04",
+                    "to": "2026-09-04",
+                    "price_chart_data": [{"time": "09:00"}],
+                    "broker_chart_data": [{"type": "TYPE_CHART_VALUE"}],
+                }
+            }
+        ),
+    )
+
+    r1 = client.get("/v1/market/session")
+    assert r1.status_code == 200
+    assert "detail" in r1.json()["session"]
+
+    r2 = client.get("/v1/market/order-queue/BBCA", params={"limit": 3})
+    assert r2.status_code == 200
+    assert r2.json()["symbol"] == "BBCA"
+    assert "orders" in r2.json()["queue"]
+
+    r3 = client.get("/v1/market/intraday/BBCA", params={"kind": "price"})
+    assert r3.status_code == 200
+    assert r3.json()["kind"] == "price"
+    assert "prices" in r3.json()
+
+    r4 = client.get("/v1/market/intraday/BBCA", params={"kind": "brokers"})
+    assert r4.status_code == 200
+    assert r4.json()["kind"] == "brokers"
+    assert "brokers" in r4.json()
+
+
+def test_index_corpaction_peer_endpoints(monkeypatch):
+    p = get_provider()
+    monkeypatch.setattr(p, "index_members", AsyncMock(return_value={"data": [{"symbol": "BBCA"}]}))
+    monkeypatch.setattr(p, "corpaction_day", AsyncMock(return_value={"data": {"dividend": []}}))
+    monkeypatch.setattr(
+        p, "corpaction_status", AsyncMock(return_value={"data": [{"symbol": "BBCA"}]})
+    )
+    monkeypatch.setattr(p, "peer_ratios", AsyncMock(return_value={"data": {"symbol": "BBCA"}}))
+    monkeypatch.setattr(p, "peer_industries", AsyncMock(return_value={"data": {"competitor": []}}))
+    monkeypatch.setattr(p, "earnings_recap", AsyncMock(return_value={"data": []}))
+    monkeypatch.setattr(
+        p,
+        "underwriter_performance",
+        AsyncMock(return_value={"data": {"underwriter": {"code": "YP"}}}),
+    )
+
+    r1 = client.get("/v1/indexes/LQ45/members", params={"limit": 3})
+    assert r1.status_code == 200
+    assert r1.json()["index"] == "LQ45"
+    assert r1.json()["members"][0]["symbol"] == "BBCA"
+
+    r2 = client.get("/v1/calendars/day/2026-09-04")
+    assert r2.status_code == 200
+    assert "dividend" in r2.json()["buckets"]
+
+    r3 = client.get("/v1/market/corpaction-status", params={"symbols": "BBCA,BBRI"})
+    assert r3.status_code == 200
+    assert r3.json()["status"][0]["symbol"] == "BBCA"
+
+    r4 = client.get("/v1/fundamentals/BBCA/peers")
+    assert r4.status_code == 200
+    assert r4.json()["symbol"] == "BBCA"
+    assert "ratios" in r4.json() and "industries" in r4.json()
+
+    r5 = client.get("/v1/market/earnings", params={"year": 2026, "quarter": 1})
+    assert r5.status_code == 200
+    assert "earnings" in r5.json()
+
+    r6 = client.get("/v1/underwriters/YP/performance")
+    assert r6.status_code == 200
+    assert r6.json()["underwriter"] == "YP"
+    assert "performance" in r6.json()
+
+
+def test_broker_summary_period_wins_over_dates(monkeypatch):
+    """Upstream silently ignores from/to when period is present — period must win."""
+    p = get_provider()
+    captured = {}
+
+    async def fake_get_json(url, params=None, label=""):
+        captured.clear()
+        captured.update(params or {})
+        return {"data": {}}
+
+    monkeypatch.setattr(p.transport, "get_json", fake_get_json)
+
+    r = client.get(
+        "/v1/brokers/summary/BBCA", params={"period": "BROKER_SUMMARY_PERIOD_LAST_7_DAYS"}
+    )
+    assert r.status_code == 200
+    assert captured.get("period") == "BROKER_SUMMARY_PERIOD_LAST_7_DAYS"
+    assert "from" not in captured and "to" not in captured
+
+    r = client.get(
+        "/v1/brokers/summary/BBCA",
+        params={
+            "from": "2026-09-01",
+            "to": "2026-09-04",
+            "transaction_type": "TRANSACTION_TYPE_GROSS",
+            "limit": 5,
+        },
+    )
+    assert r.status_code == 200
+    assert captured.get("from") == "2026-09-01"
+    assert captured.get("to") == "2026-09-04"
+    assert captured.get("transaction_type") == "TRANSACTION_TYPE_GROSS"
+    assert captured.get("limit") == 5
+    assert "period" not in captured
+
+
+def test_broker_top_and_activity_forward_filters(monkeypatch):
+    p = get_provider()
+    captured = {}
+
+    async def fake_get_json(url, params=None, label=""):
+        captured.clear()
+        captured.update(params or {})
+        captured["_url"] = url
+        return {"data": {}}
+
+    monkeypatch.setattr(p.transport, "get_json", fake_get_json)
+
+    r = client.get("/v1/brokers/top", params={"sort": "TB_SORT_BY_BUY_VALUE"})
+    assert r.status_code == 200
+    assert captured.get("sort") == "TB_SORT_BY_BUY_VALUE"
+
+    r = client.get("/v1/brokers/XL/activity", params={"limit": 10})
+    assert r.status_code == 200
+    assert captured.get("limit") == 10
+
+    r = client.get("/v1/brokers/top-stocks", params={"value_type": "VALUE_TYPE_GROSS", "page": 2})
+    assert r.status_code == 200
+    assert captured.get("value_type") == "VALUE_TYPE_GROSS"
+    assert captured.get("page") == 2
+
+    r = client.get(
+        "/v1/brokers/BBCA/distribution",
+        params={"from": "2026-09-01", "to": "2026-09-04"},
+    )
+    assert r.status_code == 200
+    assert captured.get("from") == "2026-09-01"
+    assert "period" not in captured
+
+
+async def test_trade_book_group_by_normalized(monkeypatch):
+    """Legacy GROUP_BY_PRICE spelling must normalize to numeric '1' upstream."""
+    from app.providers.stockbit.provider import StockbitProvider
+
+    p = StockbitProvider()
+    captured = {}
+
+    async def fake_get_json(url, params=None, label=""):
+        captured.clear()
+        captured.update(params or {})
+        return {"data": {}}
+
+    monkeypatch.setattr(p.transport, "get_json", fake_get_json)
+
+    await p.trade_book("BBCA", group_by="GROUP_BY_PRICE")
+    assert captured.get("group_by") == "1"
+
+    await p.trade_book("BBCA")
+    assert captured.get("group_by") == "1"

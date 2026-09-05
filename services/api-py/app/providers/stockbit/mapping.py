@@ -15,16 +15,16 @@ Never leaks raw pipe/body outside this module.
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
-
-import pytz
+from zoneinfo import ZoneInfo
 
 from app.domain.models import Board, Book, Candle, Level, Quote, Side, Trade
 
 logger = logging.getLogger(__name__)
-WIB_TZ = pytz.timezone("Asia/Jakarta")
+WIB_TZ = ZoneInfo("Asia/Jakarta")
+UTC = UTC
 
 
 # ── Orderbook pipe parser (legacy Orderbook.body field 10) ───────────────
@@ -124,7 +124,7 @@ def map_legacy_orderbook_msg(ob_legacy: Any) -> Book | None:
             try:
                 ts = datetime.fromisoformat(str(time_str).replace("Z", "+00:00"))
                 if ts.tzinfo is None:
-                    ts = WIB_TZ.localize(ts)
+                    ts = ts.replace(tzinfo=WIB_TZ)
             except Exception:
                 ts = datetime.now(WIB_TZ)
         else:
@@ -172,13 +172,13 @@ def map_liveprice_to_quote(lp: Any) -> Quote:
         try:
             ts = datetime.fromisoformat(time_str.replace("Z", "+00:00"))
             if ts.tzinfo is None:
-                ts = WIB_TZ.localize(ts)
+                ts = ts.replace(tzinfo=WIB_TZ)
         except Exception:
             ts = datetime.now(WIB_TZ)
     elif isinstance(time_str, datetime):
         ts = time_str
         if ts.tzinfo is None:
-            ts = WIB_TZ.localize(ts)
+            ts = ts.replace(tzinfo=WIB_TZ)
     else:
         ts = datetime.now(WIB_TZ)
 
@@ -236,12 +236,12 @@ def map_running_trade_to_domain(t: Any, seq: int = 0) -> Trade:
     if isinstance(time_v, datetime):
         ts = time_v
         if ts.tzinfo is None:
-            ts = pytz.UTC.localize(ts).astimezone(WIB_TZ)
+            ts = ts.replace(tzinfo=UTC).astimezone(WIB_TZ)
     elif isinstance(time_v, str) and time_v:
         try:
             ts = datetime.fromisoformat(time_v.replace("Z", "+00:00"))
             if ts.tzinfo is None:
-                ts = WIB_TZ.localize(ts)
+                ts = ts.replace(tzinfo=WIB_TZ)
         except Exception:
             ts = datetime.now(WIB_TZ)
     else:
@@ -251,7 +251,7 @@ def map_running_trade_to_domain(t: Any, seq: int = 0) -> Trade:
             utc_dt_val: datetime | None = raw_val if isinstance(raw_val, datetime) else None
             if isinstance(utc_dt_val, datetime):
                 if utc_dt_val.tzinfo is None:
-                    utc_dt_val = pytz.UTC.localize(utc_dt_val)
+                    utc_dt_val = utc_dt_val.replace(tzinfo=UTC)
                 ts = utc_dt_val.astimezone(WIB_TZ)
             else:
                 ts = datetime.now(WIB_TZ)
@@ -312,17 +312,17 @@ def map_candle_dict(d: dict[str, Any]) -> Candle | None:
             try:
                 ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
                 if ts.tzinfo is None:
-                    ts = WIB_TZ.localize(ts)
+                    ts = ts.replace(tzinfo=WIB_TZ)
             except Exception:
                 # try YYYY-MM-DD
                 try:
-                    ts = WIB_TZ.localize(datetime.strptime(ts_raw[:10], "%Y-%m-%d"))
+                    ts = datetime.strptime(ts_raw[:10], "%Y-%m-%d").replace(tzinfo=WIB_TZ)
                 except Exception:
                     ts = datetime.now(WIB_TZ)
         elif isinstance(ts_raw, datetime):
             ts = ts_raw
             if ts.tzinfo is None:
-                ts = WIB_TZ.localize(ts)
+                ts = ts.replace(tzinfo=WIB_TZ)
         else:
             ts = datetime.now(WIB_TZ)
 
@@ -379,6 +379,6 @@ def build_intraday_params(frm: date, to: date) -> dict[str, int]:
     # from = more recent (b) EOD, to = older (a) SOD — swap as be-web did
     from_naive = datetime.strptime(b.isoformat(), "%Y-%m-%d").replace(hour=23, minute=59, second=59)
     to_naive = datetime.strptime(a.isoformat(), "%Y-%m-%d").replace(hour=0, minute=0, second=0)
-    from_ts = int(WIB_TZ.localize(from_naive).timestamp())
-    to_ts = int(WIB_TZ.localize(to_naive).timestamp())
+    from_ts = int(from_naive.replace(tzinfo=WIB_TZ).timestamp())
+    to_ts = int(to_naive.replace(tzinfo=WIB_TZ).timestamp())
     return {"from": from_ts, "to": to_ts}

@@ -138,6 +138,47 @@ class HttpxTransport:
             await self._client.aclose()
             self._client = None
 
+    async def _send_once(self, method: str, url: str, **kwargs) -> httpx.Response:
+        if method == "POST":
+            return await self.client().post(url, **kwargs)
+        return await self.client().get(url, **kwargs)
+
+    async def _request_with_refresh(self, method: str, url: str, label: str, **kwargs) -> Any:
+        """GET/POST with silent 401 refresh + Retry-After; single copy of the logic."""
+        await self.limiter.acquire()
+        async with self.semaphore():
+            resp = await self._send_once(method, url, **kwargs)
+            if resp.status_code == 401:
+                from app.providers.stockbit.auth import get_auth
+
+                auth = get_auth()
+                if auth and auth.refresh_token:
+                    try:
+                        logger.info(
+                            f"401 received in {label} — attempting silent refresh via refresh_token"
+                        )
+                        await auth.refresh_tokens_via_stockbit()
+                        # Hot-swap here, not just via the lifespan on_refresh
+                        # callback: scripts/tests use get_auth() without any
+                        # callback wired, and the retry below would otherwise
+                        # re-send the dead bearer from client headers.
+                        try:
+                            self.update_bearer(auth.bearer_token)
+                        except Exception:
+                            pass
+                        resp = await self._send_once(method, url, **kwargs)
+                    except Exception as e:
+                        logger.warning(f"On-demand refresh failed after 401: {e}")
+            if resp.status_code == 429:
+                ra = resp.headers.get("Retry-After")
+                if ra:
+                    try:
+                        await asyncio.sleep(float(ra))
+                    except Exception:
+                        await asyncio.sleep(1)
+            resp.raise_for_status()
+            return orjson.loads(resp.content)
+
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=0.5, min=0.5, max=8),
@@ -151,39 +192,7 @@ class HttpxTransport:
         headers: dict[str, str] | None = None,
         label: str = "GET",
     ) -> Any:
-        await self.limiter.acquire()
-        async with self.semaphore():
-            resp = await self.client().get(url, params=params, headers=headers)
-            if resp.status_code == 401:
-                from app.providers.stockbit.auth import get_auth
-
-                auth = get_auth()
-                if auth and auth.refresh_token:
-                    try:
-                        logger.info(
-                            "401 received in get_json — attempting silent refresh via refresh_token"
-                        )
-                        await auth.refresh_tokens_via_stockbit()
-                        # Hot-swap here, not just via the lifespan on_refresh
-                        # callback: scripts/tests use get_auth() without any
-                        # callback wired, and the retry below would otherwise
-                        # re-send the dead bearer from client headers.
-                        try:
-                            self.update_bearer(auth.bearer_token)
-                        except Exception:
-                            pass
-                        resp = await self.client().get(url, params=params, headers=headers)
-                    except Exception as e:
-                        logger.warning(f"On-demand refresh failed after 401: {e}")
-            if resp.status_code == 429:
-                ra = resp.headers.get("Retry-After")
-                if ra:
-                    try:
-                        await asyncio.sleep(float(ra))
-                    except Exception:
-                        await asyncio.sleep(1)
-            resp.raise_for_status()
-            return orjson.loads(resp.content)
+        return await self._request_with_refresh("GET", url, label, params=params, headers=headers)
 
     @retry(
         stop=stop_after_attempt(3),
@@ -198,36 +207,7 @@ class HttpxTransport:
         params: dict[str, Any] | None = None,
         label: str = "POST",
     ) -> Any:
-        await self.limiter.acquire()
-        async with self.semaphore():
-            resp = await self.client().post(url, json=json, params=params)
-            if resp.status_code == 401:
-                from app.providers.stockbit.auth import get_auth
-
-                auth = get_auth()
-                if auth and auth.refresh_token:
-                    try:
-                        logger.info(
-                            "401 received in post_json — attempting silent refresh via refresh_token"
-                        )
-                        await auth.refresh_tokens_via_stockbit()
-                        # Same hot-swap as get_json: no reliance on lifespan callback.
-                        try:
-                            self.update_bearer(auth.bearer_token)
-                        except Exception:
-                            pass
-                        resp = await self.client().post(url, json=json, params=params)
-                    except Exception as e:
-                        logger.warning(f"On-demand refresh failed after 401: {e}")
-            if resp.status_code == 429:
-                ra = resp.headers.get("Retry-After")
-                if ra:
-                    try:
-                        await asyncio.sleep(float(ra))
-                    except Exception:
-                        await asyncio.sleep(1)
-            resp.raise_for_status()
-            return orjson.loads(resp.content)
+        return await self._request_with_refresh("POST", url, label, json=json, params=params)
 
     async def stream_json_array(
         self,

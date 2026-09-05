@@ -33,6 +33,7 @@ TIER_TTL = {
     "brokers": 300,
     "sectors": 1800,
     "calendars": 3600,
+    "seasonality": 86400,
     "default": 60,
 }
 

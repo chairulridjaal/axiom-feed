@@ -71,12 +71,17 @@ async def running_trades_snapshot(
     order_by: str = Query("RUNNING_TRADE_ORDER_BY_TIME", description="Order by criterion"),
 ):
     """Retrieve upstream snapshot of recent market-wide trade executions."""
+    from app.infra.upstream_cache import cached_json
     from app.providers.stockbit.provider import get_provider
 
-    prov = get_provider()
-    try:
-        data = await prov.running_trade_snapshot(sort=sort, limit=limit, order_by=order_by)
-        raw_data = data.get("data") if isinstance(data, dict) else data
-        return {"running_trades": raw_data}
-    except Exception as e:
-        return {"running_trades": None, "error": str(e)}
+    async def _produce():
+        prov = get_provider()
+        try:
+            data = await prov.running_trade_snapshot(sort=sort, limit=limit, order_by=order_by)
+            raw_data = data.get("data") if isinstance(data, dict) else data
+            return {"running_trades": raw_data}
+        except Exception as e:
+            return {"running_trades": None, "error": str(e)}
+
+    # Market-wide tape snapshot: short-lived, trades:10s tier fits.
+    return await cached_json(f"trades:running:{limit}:{sort}:{order_by}", _produce)

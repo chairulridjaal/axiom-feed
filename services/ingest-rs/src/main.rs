@@ -40,11 +40,6 @@ async fn main() -> anyhow::Result<()> {
     let hub_clone = hub.clone();
     tokio::spawn(hub::redis_publisher_task(hub_clone, redis_url.clone()));
 
-    let direct_ipc_addr =
-        std::env::var("DIRECT_IPC_BIND").unwrap_or_else(|_| "127.0.0.1:8379".to_string());
-    let hub_ipc = hub.clone();
-    tokio::spawn(hub::direct_ipc_server_task(hub_ipc, direct_ipc_addr));
-
     let redis_for_pub = redis_url.clone();
     tokio::spawn(async move {
         let mut backoff = Duration::from_secs(2);

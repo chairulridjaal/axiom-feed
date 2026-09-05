@@ -7,7 +7,7 @@ New code should import from:
 This file keeps old import paths working (tests import from auth).
 """
 
-from .cookies import AUTH_MODE, COOKIES_PATH, _get_auth_mode, _get_cookies_path, load_cookies_array
+from .cookies import _get_auth_mode, _get_cookies_path, load_cookies_array
 from .jwt import (
     COOKIES_STALE_MSG,
     JWT_EXPIRED_MSG,
@@ -30,8 +30,6 @@ from .manager import (
 )
 
 __all__ = [
-    "AUTH_MODE",
-    "COOKIES_PATH",
     "COOKIES_STALE_MSG",
     "JWT_EXPIRED_MSG",
     "BEARER_ENV",

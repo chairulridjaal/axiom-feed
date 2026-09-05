@@ -52,8 +52,9 @@ pnpm-debug.log*
 *.zst
 *.parquet
 **/data/parquet/
-.codebase-memory/
-.codegraph/
+data/
+services/api-py/data/*
+*.vbs
 
 # ── OS & Editor Artifacts ────────────────────────────────────────────────
 .DS_Store

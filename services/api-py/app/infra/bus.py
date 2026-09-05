@@ -51,6 +51,19 @@ async def _fanout_trade_batch(hub: Hub, evt: dict) -> None:
         await hub.publish_batch(batch)
 
 
+async def _dispatch(hub: Hub, live_feed, evt: dict) -> None:
+    """Single fanout path: trade_batch expansion, Hub publish, live-feed ingest."""
+    if evt.get("kind") == "trade_batch":
+        await _fanout_trade_batch(hub, evt)
+    else:
+        await hub.publish(evt)
+    if live_feed is not None:
+        try:
+            live_feed.ingest_hub_event(evt)
+        except Exception:
+            pass
+
+
 class Hub:
     """Per-client Queue(100) drop-oldest with bounded clients."""
 
@@ -84,18 +97,18 @@ class Hub:
         _preserialize(event)
         dropped = 0
         for q in clients:
-            try:
-                if q.full():
-                    q.get_nowait()
-                    dropped += 1
-                q.put_nowait(event)
-            except (asyncio.QueueFull, asyncio.QueueEmpty):
+            # Single evict-then-put: drop-oldest when full, then enqueue.
+            if q.full():
                 try:
                     q.get_nowait()
-                    q.put_nowait(event)
-                    dropped += 1
-                except (asyncio.QueueFull, asyncio.QueueEmpty):
+                except asyncio.QueueEmpty:
                     pass
+                else:
+                    dropped += 1
+            try:
+                q.put_nowait(event)
+            except asyncio.QueueFull:
+                dropped += 1
         self.messages_dropped += dropped
 
     async def publish_batch(self, events: list[dict]):
@@ -230,15 +243,7 @@ async def redis_consumer_task(hub: Hub, redis_url: str):
                         except Exception:
                             evt = {"raw": raw}
                         if isinstance(evt, dict):
-                            if evt.get("kind") == "trade_batch":
-                                await _fanout_trade_batch(hub, evt)
-                            else:
-                                await hub.publish(evt)
-                            if live_feed is not None:
-                                try:
-                                    live_feed.ingest_hub_event(evt)
-                                except Exception:
-                                    pass
+                            await _dispatch(hub, live_feed, evt)
                         if group_created:
                             ack_ids.append(entry_id)
                     if group_created and ack_ids:
@@ -259,60 +264,3 @@ async def redis_consumer_task(hub: Hub, redis_url: str):
             except Exception:
                 pass
         logger.info("redis_consumer stopped")
-
-
-async def direct_ipc_consumer_task(
-    hub: Hub,
-    host: str = "127.0.0.1",
-    port: int = 8379,
-    reconnect_delay: float = 2.0,
-):
-    """Direct streaming TCP IPC client connecting to ingest-rs without Redis.
-
-    Enables zero-Redis execution for single-machine, dev, or edge setups.
-    Streams newline-delimited JSON events with sub-10us cross-process delivery.
-    """
-    logger.info(f"direct_ipc_consumer target set to {host}:{port}")
-    live_feed = None
-    try:
-        from app.providers.stockbit.provider import get_provider
-
-        live_feed = get_provider().live_feed()
-    except Exception:
-        pass
-
-    while True:
-        try:
-            reader, writer = await asyncio.open_connection(host, port)
-            logger.info(f"direct_ipc_consumer connected to {host}:{port}")
-            while not reader.at_eof():
-                line = await reader.readline()
-                if not line:
-                    break
-                try:
-                    evt = orjson.loads(line)
-                except Exception:
-                    continue
-                if isinstance(evt, dict):
-                    if evt.get("kind") == "trade_batch":
-                        await _fanout_trade_batch(hub, evt)
-                    else:
-                        await hub.publish(evt)
-                    if live_feed is not None:
-                        try:
-                            live_feed.ingest_hub_event(evt)
-                        except Exception:
-                            pass
-            writer.close()
-            try:
-                await writer.wait_closed()
-            except Exception:
-                pass
-            logger.warning(f"direct_ipc_consumer connection closed by {host}:{port} — retrying")
-        except asyncio.CancelledError:
-            break
-        except Exception as e:
-            logger.debug(
-                f"direct_ipc_consumer connection failed: {e} — retry in {reconnect_delay}s"
-            )
-            await asyncio.sleep(reconnect_delay)
