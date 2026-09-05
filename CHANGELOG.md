@@ -4,6 +4,15 @@ Use this file to track engineering chronology, operational actions, and empirica
 
 ---
 
+### 2026-09-05 WIB — followup-advisor-verdicts
+- **Objective**: Close the four advisor follow-ups from the redis-only/SQLite/cache-aside refactor.
+- **Context**: Verdicts accepted as given: (1) dashboard `tsc` gate was proven necessary by a real broken-commit incident (`35f2313` fixed 19 orphan braces); gate as full `vite build` since that's the shipped artifact. (2) TTL tuning deferred 1–2 weeks for real traffic; near-zero hit-rate in a tier means the key is never re-requested — drop caching for it, don't lengthen TTL. (3) No formal SQLite benchmark suite — log-only tripwire instead, build benches only if it fires. (4) Redis-only stands; no IPC fallback flag — Redis-HA belongs at infra level, not as bespoke app transport. Rollback safety: no persistent schema changed in this line (tick_store/SQLite untouched; Parquet removal deleted a read/export path, not data), so `git revert` is sufficient with no back-migration.
+- **Changes**: CI gains `dashboard` job (`npm ci` + `tsc --noEmit` + `vite build`); `BoundedCache` tracks per-tier hits/misses surfaced in `/v1/health` `cache.upstream.tiers` (`hit_rate` per tier, `None` until first request); `SQLiteArchive.calculate_vwap` logs a warning past 500ms (`SQLite VWAP slow`); no benchmark suite, no IPC fallback.
+- **Proof**: `pytest` 44/44, `ruff check` + `format --check` clean; dashboard `tsc --noEmit` clean + `vite build` succeeds locally.
+- **State**: Operational.
+
+---
+
 ### 2026-09-05 WIB — refactor-redis-only-ingest-sqlite-cache-aside
 - **Objective**: Cut direct-IPC transport, replace DuckDB/Parquet with SQLite analytics, and put every upstream REST route behind one cache-aside layer.
 - **Context**: Three ingest paths (embedded/redis/direct) with Rust always running both outputs; `DuckDBArchive` + Parquet export (~30MB dep) had no downstream consumer; only candles had cache/singleflight while ~35 upstream routes hit Stockbit unguarded; provider stacked a second semaphore over the transport gate.

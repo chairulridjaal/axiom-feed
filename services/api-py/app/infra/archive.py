@@ -10,6 +10,7 @@ import logging
 import os
 import sqlite3
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -75,8 +76,13 @@ class SQLiteArchive:
         if con is None:
             return None
         try:
+            start = time.monotonic()
             with self._lock:
                 row = con.execute(_VWAP_SQL, (sym,)).fetchone()
+            elapsed_ms = (time.monotonic() - start) * 1000.0
+            # ponytail: log-only tripwire, no benchmark suite until this fires in prod
+            if elapsed_ms > 500:
+                logger.warning(f"SQLite VWAP slow: {sym} took {elapsed_ms:.0f}ms")
             if not row or not row[0]:
                 return None
             return _vwap_row_to_stats(sym, row)

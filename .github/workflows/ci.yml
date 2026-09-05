@@ -13,3 +13,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cd services/ingest-rs && cargo fmt --check && cargo clippy -- -D warnings && cargo test
+  dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - run: cd dashboard && npm ci && npx tsc --noEmit && npm run build

@@ -41,13 +41,15 @@ TIER_TTL = {
 _TTL_ORDERED = sorted(TIER_TTL.items(), key=lambda kv: -len(kv[0]))
 
 
+def tier_for(key: str) -> str:
+    for prefix, _ in _TTL_ORDERED:
+        if prefix != "default" and key.startswith(prefix):
+            return prefix
+    return "default"
+
+
 def ttl_for(key: str) -> float:
-    for prefix, ttl in _TTL_ORDERED:
-        if prefix == "default":
-            continue
-        if key.startswith(prefix):
-            return float(ttl)
-    return float(TIER_TTL["default"])
+    return float(TIER_TTL.get(tier_for(key), TIER_TTL["default"]))
 
 
 @dataclass
@@ -73,6 +75,8 @@ class BoundedCache:
         self.hits = 0
         self.misses = 0
         self.evictions = 0
+        self._tier_hits: dict[str, int] = {}
+        self._tier_misses: dict[str, int] = {}
         self._lock = threading.Lock()
 
     def get(self, key: str):
@@ -83,9 +87,13 @@ class BoundedCache:
                     self._bytes -= e.size
                     del self._store[key]
                 self.misses += 1
+                tier = tier_for(key)
+                self._tier_misses[tier] = self._tier_misses.get(tier, 0) + 1
                 return None
             self._store.move_to_end(key)
             self.hits += 1
+            tier = tier_for(key)
+            self._tier_hits[tier] = self._tier_hits.get(tier, 0) + 1
             return e.value
 
     def set(self, key: str, value: object, size: int, ttl_s: float | None = None):
@@ -112,6 +120,15 @@ class BoundedCache:
             self._bytes += size
 
     def stats(self):
+        tiers: dict[str, dict[str, object]] = {}
+        for tier in set(self._tier_hits) | set(self._tier_misses):
+            h = self._tier_hits.get(tier, 0)
+            m = self._tier_misses.get(tier, 0)
+            tiers[tier] = {
+                "hits": h,
+                "misses": m,
+                "hit_rate": round(h / (h + m), 3) if h + m else None,
+            }
         return {
             "keys": len(self._store),
             "bytes": self._bytes,
@@ -120,6 +137,7 @@ class BoundedCache:
             "hits": self.hits,
             "misses": self.misses,
             "evictions": self.evictions,
+            "tiers": tiers,
         }
 
     def clear(self):
