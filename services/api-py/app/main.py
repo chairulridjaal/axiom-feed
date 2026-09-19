@@ -14,7 +14,13 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
-load_dotenv(Path(__file__).resolve().parents[3] / ".env")
+
+# Repo-root .env (host layout: services/api-py/app/main.py -> parents[3] = repo root).
+# Containerized layout (/app/app/main.py) has fewer parents and env comes from
+# compose env_file, so tolerate a short path instead of crashing on IndexError.
+_parents = Path(__file__).resolve().parents
+if len(_parents) > 3:
+    load_dotenv(_parents[3] / ".env")
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
