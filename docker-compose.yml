@@ -18,6 +18,9 @@ services:
       RUST_LOG: info
       REDIS_URL: redis://redis:6379
       STOCKBIT_WS_URL: ${STOCKBIT_WS_URL:-wss://wss-jkt.trading.stockbit.com/ws}
+      AXIOM_SPOOL_DIR: ${AXIOM_SPOOL_DIR:-/var/lib/axiom/spool}
+    volumes:
+      - axiom-spool:/var/lib/axiom/spool
     depends_on:
       redis:
         condition: service_healthy
@@ -43,3 +46,7 @@ services:
       interval: 10s
       timeout: 3s
       retries: 3
+
+volumes:
+  axiom-spool:
+    driver: local

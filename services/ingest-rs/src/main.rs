@@ -11,6 +11,7 @@ use tracing::{error, info, warn};
 mod decode;
 mod feed;
 mod hub;
+mod spool;
 
 use hub::Hub;
 
@@ -40,7 +41,11 @@ async fn main() -> anyhow::Result<()> {
     let hub_clone = hub.clone();
     tokio::spawn(hub::redis_publisher_task(hub_clone, redis_url.clone()));
 
+    // Start the archive spool (axiom-mine capture) if AXIOM_SPOOL_DIR is set.
+    let spool_handle = spool::spawn(hub.sender()).unwrap_or_else(spool::SpoolHandle::inactive);
+
     let redis_for_pub = redis_url.clone();
+    let spool_for_auth = spool_handle.clone();
     tokio::spawn(async move {
         let mut backoff = Duration::from_secs(2);
         loop {
@@ -70,6 +75,10 @@ async fn main() -> anyhow::Result<()> {
                                         if let Some(k) = v.get("ws_key").and_then(|x| x.as_str()) {
                                             std::env::set_var("STOCKBIT_WS_KEY", k);
                                         }
+                                        spool_for_auth.lifecycle(
+                                            "auth_refresh",
+                                            serde_json::json!({ "source": "redis_pubsub" }),
+                                        );
                                     }
                                 }
                             }
@@ -100,7 +109,7 @@ async fn main() -> anyhow::Result<()> {
         warn!("STOCKBIT_BEARER_TOKEN or WS_KEY empty — will connect once credentials available via redis/env");
     }
 
-    run_loop(ws_url, user_id, ws_key, bearer, initial_symbols, hub).await
+    run_loop(ws_url, user_id, ws_key, bearer, initial_symbols, hub, spool_handle).await
 }
 
 async fn run_loop(
@@ -110,10 +119,16 @@ async fn run_loop(
     mut bearer: String,
     initial_symbols: Vec<String>,
     hub: Arc<Hub>,
+    spool_handle: spool::SpoolHandle,
 ) -> anyhow::Result<()> {
-    let feed_state = feed::FeedState::new(initial_symbols);
+    let feed_state = feed::FeedState::new(initial_symbols.clone());
+    spool_handle.lifecycle(
+        "capture_start",
+        serde_json::json!({ "watchlist": initial_symbols, "ws_url": ws_url }),
+    );
     let mut backoff = Duration::from_secs(5);
     let max_backoff = Duration::from_secs(60);
+    let mut disconnect_time: Option<std::time::Instant> = None;
 
     loop {
         if let Ok(b) = std::env::var("STOCKBIT_BEARER_TOKEN") {
@@ -164,10 +179,22 @@ async fn run_loop(
             Ok(v) => {
                 info!("WSS connected");
                 backoff = Duration::from_secs(5);
+                if let Some(t0) = disconnect_time.take() {
+                    spool_handle.lifecycle(
+                        "wss_reconnect",
+                        serde_json::json!({ "gap_ms": t0.elapsed().as_millis() as u64 }),
+                    );
+                } else {
+                    spool_handle.lifecycle("wss_connect", serde_json::json!({}));
+                }
                 v
             }
             Err(e) => {
                 error!("WSS connect failed: {} — backoff {:?}", e, backoff);
+                spool_handle.lifecycle(
+                    "wss_connect_failed",
+                    serde_json::json!({ "error": e.to_string(), "backoff_ms": backoff.as_millis() as u64 }),
+                );
                 tokio::time::sleep(backoff).await;
                 backoff = std::cmp::min(max_backoff, backoff * 2);
                 let jitter = rand::random::<f64>() * 0.3 + 0.85;
@@ -196,6 +223,11 @@ async fn run_loop(
                     let ping = feed_state.build_ping();
                     if let Err(e) = ws_stream.send(Message::Binary(ping)).await {
                         warn!("ping send failed: {} — reconnecting", e);
+                        spool_handle.lifecycle(
+                            "wss_disconnect",
+                            serde_json::json!({ "reason": format!("ping_send:{}", e) }),
+                        );
+                        disconnect_time = Some(std::time::Instant::now());
                         break;
                     }
                 }
@@ -214,16 +246,31 @@ async fn run_loop(
                         }
                         Some(Ok(Message::Close(frame))) => {
                             warn!("WSS closed: {:?}", frame);
+                            spool_handle.lifecycle(
+                                "wss_disconnect",
+                                serde_json::json!({ "reason": format!("close:{:?}", frame) }),
+                            );
+                            disconnect_time = Some(std::time::Instant::now());
                             break;
                         }
                         Some(Ok(Message::Ping(_))) => {}
                         Some(Ok(_)) => {}
                         Some(Err(e)) => {
                             warn!("WSS read error: {} — reconnecting", e);
+                            spool_handle.lifecycle(
+                                "wss_disconnect",
+                                serde_json::json!({ "reason": format!("read_error:{}", e) }),
+                            );
+                            disconnect_time = Some(std::time::Instant::now());
                             break;
                         }
                         None => {
                             warn!("WSS stream ended — reconnecting");
+                            spool_handle.lifecycle(
+                                "wss_disconnect",
+                                serde_json::json!({ "reason": "stream_ended" }),
+                            );
+                            disconnect_time = Some(std::time::Instant::now());
                             break;
                         }
                     }
