@@ -48,10 +48,13 @@ def _find_env_file(configured: Path | str | None = None) -> Path | None:
     cands = [
         Path(".env"),
         Path("../../.env"),
-        # manager.py parents: [0]=stockbit [1]=providers [2]=app [3]=api-py
-        # [4]=services [5]=repo root. (Was parents[4] = services/ — wrong dir.)
-        Path(__file__).resolve().parents[5] / ".env",
     ]
+    # manager.py parents on host: [0]=stockbit [1]=providers [2]=app [3]=api-py
+    # [4]=services [5]=repo root. Container layout (/app/app/providers/stockbit/...)
+    # has fewer parents and env comes from compose env_file — tolerate short path.
+    _p = Path(__file__).resolve().parents
+    if len(_p) > 5:
+        cands.append(_p[5] / ".env")
     for c in cands:
         if c.exists():
             return c
