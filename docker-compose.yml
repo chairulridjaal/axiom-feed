@@ -34,6 +34,9 @@ services:
     environment:
       REDIS_URL: redis://redis:6379
       INGEST_MODE: ${INGEST_MODE:-redis} # redis | embedded
+    volumes:
+      # Cookie-based auth rotation; source of truth lives outside the repo.
+      - /etc/axiom/cookies.json:/app/cookies.json:ro
     ports: ["8000:8000"]
     depends_on:
       redis:
