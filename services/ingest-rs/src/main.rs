@@ -166,13 +166,29 @@ async fn run_loop(
             &ws_key[..ws_key.len().min(8)]
         );
 
-        let request = tokio_tungstenite::tungstenite::handshake::client::Request::builder()
-            .uri(ws_url.clone())
-            .header("Origin", "https://stockbit.com")
-            .header("Authorization", format!("Bearer {}", bearer))
-            .header("User-Agent", "Mozilla/5.0")
-            .body(())
-            .unwrap();
+        // Build the WS request via IntoClientRequest so tungstenite adds the
+        // required handshake headers (Host, Connection, Upgrade,
+        // Sec-WebSocket-Version, Sec-WebSocket-Key). A hand-built
+        // http::Request does NOT get them, and generate_request then fails
+        // with "Missing, duplicated or incorrect header sec-websocket-key".
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+        use tokio_tungstenite::tungstenite::http::HeaderValue;
+        let mut request = match ws_url.as_str().into_client_request() {
+            Ok(r) => r,
+            Err(e) => {
+                error!("invalid ws request url: {} — backoff {:?}", e, backoff);
+                tokio::time::sleep(backoff).await;
+                continue;
+            }
+        };
+        {
+            let headers = request.headers_mut();
+            headers.insert("Origin", HeaderValue::from_static("https://stockbit.com"));
+            if let Ok(v) = HeaderValue::from_str(&format!("Bearer {}", bearer)) {
+                headers.insert("Authorization", v);
+            }
+            headers.insert("User-Agent", HeaderValue::from_static("Mozilla/5.0"));
+        }
 
         let connect_result = tokio_tungstenite::connect_async(request).await;
         let (mut ws_stream, _) = match connect_result {
