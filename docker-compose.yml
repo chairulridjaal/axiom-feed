@@ -36,7 +36,11 @@ services:
       INGEST_MODE: ${INGEST_MODE:-redis} # redis | embedded
     volumes:
       # Cookie-based auth rotation; source of truth lives outside the repo.
-      - /etc/axiom/cookies.json:/app/cookies.json:ro
+      - /etc/axiom/cookies.json:/app/cookies.json
+      # Writable env so rotated bearer/refresh tokens persist across restarts.
+      # Without this, a rotated refresh token exists only in the container's
+      # memory and is lost on restart, forcing a manual re-login.
+      - /etc/axiom/feed.env:/app/.env
     ports: ["8000:8000"]
     depends_on:
       redis:

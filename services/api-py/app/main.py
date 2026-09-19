@@ -73,6 +73,9 @@ async def lifespan(app: FastAPI):
         bearer_token=bearer,
         refresh_token=refresh,
         cookies_path=cookies_path,
+        # Persist rotated bearer/refresh tokens so a container/service restart
+        # doesn't lose them. /app/.env is bind-mounted to /etc/axiom/feed.env.
+        env_path=os.getenv("AXIOM_ENV_PATH", "/app/.env"),
         on_refresh=_on_refresh,
     )
     auth.redis_url = redis_url
