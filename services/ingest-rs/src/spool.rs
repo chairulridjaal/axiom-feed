@@ -42,6 +42,29 @@ pub fn lifecycle_line(event: &str, detail: serde_json::Value) -> String {
     .to_string()
 }
 
+/// Find the next unused segment index for a day directory.
+///
+/// Considers BOTH sealed (`events-NNNNN.ndjson`) and active
+/// (`events-NNNNN.ndjson.active`) names so a restart can never pick an index
+/// whose sealed file already exists — sealing would rename over it and lose data.
+fn next_free_index(day_dir: &Path) -> std::io::Result<u64> {
+    let mut max_seen = 0u64;
+    if day_dir.exists() {
+        for entry in std::fs::read_dir(day_dir)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if let Some(rest) = name.strip_prefix("events-") {
+                let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+                if let Ok(n) = digits.parse::<u64>() {
+                    max_seen = max_seen.max(n);
+                }
+            }
+        }
+    }
+    Ok(max_seen + 1)
+}
+
 struct SegmentWriter {
     dir: PathBuf,
     date: String,
@@ -82,23 +105,6 @@ impl SegmentWriter {
         let day_changed = today != self.date;
         let too_big = self.bytes >= MAX_SEGMENT_BYTES;
         if !force && !day_changed && !too_big {
-            // Fresh process started but a same-day, same-index .active file was
-            // left by an earlier process (e.g. after a rename/recreate): adopt it,
-            // counting nothing, instead of starting a duplicate index-1 segment
-            // that overwrites/corrupts the downstream Parquet part numbering.
-            // Adopted bytes are unknown; rotation is size-driven from here on.
-            let candidate = self.active_path(1);
-            if self.index == 0 && candidate.exists() {
-                self.date = today;
-                self.index = 1;
-                self.active_path = candidate;
-                let file = OpenOptions::new().create(true).append(true).open(&self.active_path)?;
-                self.file = Some(BufWriter::new(file));
-                self.bytes = 0;
-                self.events_since_sync = 0;
-                self.last_sync = std::time::Instant::now();
-                info!("spool: adopted existing {:?}", self.active_path);
-            }
             return Ok(());
         }
         // Seal current segment.
@@ -114,10 +120,13 @@ impl SegmentWriter {
         }
         if day_changed {
             self.date = today;
-            self.index = 0;
             std::fs::create_dir_all(self.day_dir())?;
         }
-        self.index += 1;
+        // Pick the next FREE index for this day. Never reuse an index that
+        // already exists on disk: a later seal would rename over the existing
+        // sealed file and destroy it (observed 2026-09-21 when a restart
+        // recreated index 1 while sealed index 1 already held the morning data).
+        self.index = next_free_index(&self.day_dir())?;
         self.active_path = self.active_path(self.index);
         let file = OpenOptions::new().create(true).append(true).open(&self.active_path)?;
         self.file = Some(BufWriter::new(file));
@@ -291,23 +300,50 @@ mod tests {
     }
 
     #[test]
-    fn test_fresh_writer_adopts_existing_active() {
-        // Index-1 active file left by a previous process must be adopted, not
-        // re-created as a duplicate index-1 segment.
-        let tmp = std::env::temp_dir().join(format!("spool_adopt_{}", std::process::id()));
+    fn test_restart_does_not_reuse_sealed_index() {
+        // Regression: a restart while sealed index 1 exists must NOT create a new
+        // index 1 — sealing that would rename over the sealed file and lose data.
+        let tmp = std::env::temp_dir().join(format!("spool_reuse_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         let day = wib_date_str();
         let day_dir = tmp.join(&day);
         std::fs::create_dir_all(&day_dir).unwrap();
-        std::fs::write(day_dir.join("events-00001.ndjson.active"), "{\"n\":0}\n").unwrap();
+        std::fs::write(day_dir.join("events-00001.ndjson"), "{\"morning\":1}\n").unwrap();
+        std::fs::write(day_dir.join("events-00002.ndjson"), "{\"afternoon\":1}\n").unwrap();
+
         let mut w = SegmentWriter::new(&tmp).unwrap();
-        assert_eq!(w.index, 1, "must adopt the existing active segment");
+        assert_eq!(w.index, 3, "must continue at index 3, not reuse 1 or 2");
+        w.write_line("{\"next\":1}").unwrap();
+
+        // The sealed files must be untouched.
+        assert!(std::fs::read_to_string(day_dir.join("events-00001.ndjson")).unwrap().contains("morning"));
+        assert!(std::fs::read_to_string(day_dir.join("events-00002.ndjson")).unwrap().contains("afternoon"));
+        // And sealing the new segment must land on index 3.
+        w.rotate(true).unwrap();
+        assert!(day_dir.join("events-00003.ndjson").exists(), "new segment seals to index 3");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_leftover_active_does_not_clash_with_sealed() {
+        // A leftover .active (index 1) plus a sealed index 1 file must not both
+        // resolve to index 1: the new writer continues past the highest index.
+        let tmp = std::env::temp_dir().join(format!("spool_leftover_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let day = wib_date_str();
+        let day_dir = tmp.join(&day);
+        std::fs::create_dir_all(&day_dir).unwrap();
+        std::fs::write(day_dir.join("events-00001.ndjson"), "{\"sealed\":1}\n").unwrap();
+        std::fs::write(day_dir.join("events-00001.ndjson.active"), "{\"leftover\":1}\n").unwrap();
+
+        let mut w = SegmentWriter::new(&tmp).unwrap();
+        assert_eq!(w.index, 2, "must continue at index 2, leaving sealed 1 intact");
         w.write_line("{\"n\":1}").unwrap();
-        // Flush is periodic (low-rate path); force it so the test can read back.
         w.last_sync = std::time::Instant::now() - std::time::Duration::from_millis(FSYNC_INTERVAL_MS + 10);
         w.flush_due().unwrap();
-        let contents = std::fs::read_to_string(day_dir.join("events-00001.ndjson.active")).unwrap();
-        assert!(contents.contains("\"n\":0") && contents.contains("\"n\":1"), "appended, not truncated: {:?}", contents);
+
+        // Sealed index 1 untouched; leftover active still there (operator decides).
+        assert!(std::fs::read_to_string(day_dir.join("events-00001.ndjson")).unwrap().contains("sealed"));
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
