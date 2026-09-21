@@ -199,12 +199,12 @@ pub fn spawn(hub_tx: broadcast::Sender<String>) -> Option<SpoolHandle> {
 
     // Writer: drains the queue and periodically flushes so idle periods persist.
     let root_clone = root.clone();
+    info!("spool: archiving to {:?}", root_clone);
     tokio::spawn(async move {
         let mut writer = match SegmentWriter::new(&root_clone) {
             Ok(w) => w,
             Err(e) => { error!("spool: writer init failed: {}", e); return; }
         };
-        info!("spool: archiving to {:?}", root_clone);
         let mut flush_tick = tokio::time::interval(std::time::Duration::from_millis(FSYNC_INTERVAL_MS));
         flush_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
