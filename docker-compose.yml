@@ -1,10 +1,11 @@
-# Host data dirs. Used as bind mounts so the host (QC, offload, retention,
-# inspection) sees exactly what the containers see. Named volumes are avoided
-# because a named volume SHADOWS the host dir — the host then sees an empty
-# directory while the container sees data (2026-09-21 incident).
-AXIOM_SPOOL_HOST_DIR: /var/lib/axiom/spool
-AXIOM_LAKE_HOST_DIR: /var/lib/axiom/lake
-AXIOM_SPOOL_ARCHIVE_HOST_DIR: /var/lib/axiom/spool-archive
+x-axiom-data:
+  # Host data dirs. Used as bind mounts so the host (QC, offload, retention,
+  # inspection) sees exactly what the containers see. Named volumes are avoided
+  # because a named volume SHADOWS the host dir — the host then sees an empty
+  # directory while the container sees data (2026-09-21 incident).
+  AXIOM_SPOOL_HOST_DIR: /var/lib/axiom/spool
+  AXIOM_LAKE_HOST_DIR: /var/lib/axiom/lake
+  AXIOM_SPOOL_ARCHIVE_HOST_DIR: /var/lib/axiom/spool-archive
 
 services:
   redis:
