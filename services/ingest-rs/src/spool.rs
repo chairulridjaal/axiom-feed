@@ -82,6 +82,23 @@ impl SegmentWriter {
         let day_changed = today != self.date;
         let too_big = self.bytes >= MAX_SEGMENT_BYTES;
         if !force && !day_changed && !too_big {
+            // Fresh process started but a same-day, same-index .active file was
+            // left by an earlier process (e.g. after a rename/recreate): adopt it,
+            // counting nothing, instead of starting a duplicate index-1 segment
+            // that overwrites/corrupts the downstream Parquet part numbering.
+            // Adopted bytes are unknown; rotation is size-driven from here on.
+            let candidate = self.active_path(1);
+            if self.index == 0 && candidate.exists() {
+                self.date = today;
+                self.index = 1;
+                self.active_path = candidate;
+                let file = OpenOptions::new().create(true).append(true).open(&self.active_path)?;
+                self.file = Some(BufWriter::new(file));
+                self.bytes = 0;
+                self.events_since_sync = 0;
+                self.last_sync = std::time::Instant::now();
+                info!("spool: adopted existing {:?}", self.active_path);
+            }
             return Ok(());
         }
         // Seal current segment.
@@ -270,6 +287,27 @@ mod tests {
         assert!(sealed.exists(), "sealed segment should exist");
         let active = tmp.join(&day).join("events-00002.ndjson.active");
         assert!(active.exists(), "new active segment should exist");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_fresh_writer_adopts_existing_active() {
+        // Index-1 active file left by a previous process must be adopted, not
+        // re-created as a duplicate index-1 segment.
+        let tmp = std::env::temp_dir().join(format!("spool_adopt_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let day = wib_date_str();
+        let day_dir = tmp.join(&day);
+        std::fs::create_dir_all(&day_dir).unwrap();
+        std::fs::write(day_dir.join("events-00001.ndjson.active"), "{\"n\":0}\n").unwrap();
+        let mut w = SegmentWriter::new(&tmp).unwrap();
+        assert_eq!(w.index, 1, "must adopt the existing active segment");
+        w.write_line("{\"n\":1}").unwrap();
+        // Flush is periodic (low-rate path); force it so the test can read back.
+        w.last_sync = std::time::Instant::now() - std::time::Duration::from_millis(FSYNC_INTERVAL_MS + 10);
+        w.flush_due().unwrap();
+        let contents = std::fs::read_to_string(day_dir.join("events-00001.ndjson.active")).unwrap();
+        assert!(contents.contains("\"n\":0") && contents.contains("\"n\":1"), "appended, not truncated: {:?}", contents);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
