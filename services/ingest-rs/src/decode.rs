@@ -20,6 +20,26 @@ struct BookDepthState {
 thread_local! {
     static DECODE_SCRATCH: RefCell<Vec<u8>> = RefCell::new(Vec::with_capacity(16384));
     static DEPTH_TRACKER: RefCell<HashMap<String, BookDepthState>> = RefCell::new(HashMap::new());
+    // Per-symbol monotonic sequence for book events. The pure-protobuf wire
+    // (OrderBookBody, Tag 6) carries no usable sequence number, so we generate one
+    // for gap detection downstream. Resets on process restart (logged in lifecycle).
+    static SEQ_TRACKER: RefCell<HashMap<String, u64>> = RefCell::new(HashMap::new());
+}
+
+fn next_seq(sym: &str) -> u64 {
+    SEQ_TRACKER.with(|t| {
+        let mut m = t.borrow_mut();
+        let e = m.entry(sym.to_string()).or_insert(0);
+        *e += 1;
+        *e
+    })
+}
+
+/// Clear per-symbol book depth state. Must be called on WSS reconnect/re-subscribe:
+/// after a gap, the first book update is otherwise side-suppressed against stale
+/// pre-disconnect levels, carrying phantom liquidity into the archive.
+pub fn reset_depth_tracker() {
+    DEPTH_TRACKER.with(|t| t.borrow_mut().clear());
 }
 
 /// Decompress bytes into a reusable buffer, avoiding allocations in steady state.
@@ -178,6 +198,9 @@ pub fn decode(bytes: &[u8]) -> Option<Vec<NormalizedEvent>> {
                         "action": t.action,
                         "board": t.market_board,
                         "trade_number": t.trade_number,
+                        // Preserve the exchange match time. Without this the trade
+                        // tape loses exchange_ts entirely (compact reads "time").
+                        "time": t.time.map(|x| x.seconds),
                     })
                 })
                 .collect();
@@ -273,6 +296,9 @@ pub fn decode(bytes: &[u8]) -> Option<Vec<NormalizedEvent>> {
                     "bids": bids,
                     "offers": offers,
                     "time": ob.time.map(|t| t.seconds),
+                    // Wire (Tag 6) has no sequence; we generate a monotonic per-symbol
+                    // counter so downstream can detect missed book updates.
+                    "seq": next_seq(&sym),
                 }),
             });
         }
@@ -287,6 +313,7 @@ pub fn decode(bytes: &[u8]) -> Option<Vec<NormalizedEvent>> {
                     "offers": asks,
                     "time": ob.time,
                     "server_time": ob.server_time,
+                    "seq": next_seq(&ob.stock),
                 }),
             });
         }

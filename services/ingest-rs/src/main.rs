@@ -228,6 +228,10 @@ async fn run_loop(
                 feed_state.liveprice.len(),
                 feed_state.orderbook.len()
             );
+            // Re-subscribed after a (re)connect: clear stale per-symbol book depth so
+            // the next update per symbol is forced full, not side-suppressed against
+            // pre-gap levels (phantom-liquidity guard).
+            decode::reset_depth_tracker();
         }
 
         let mut ping_interval = tokio::time::interval(Duration::from_secs(25));
