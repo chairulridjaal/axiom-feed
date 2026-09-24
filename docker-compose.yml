@@ -62,7 +62,9 @@ services:
         condition: service_started
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/v1/health"]
+      # No curl/wget in the uv:python3.12-bookworm-slim image (container showed
+      # permanently "unhealthy" while answering 200 — 2026-09-24). Use stdlib.
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/v1/health', timeout=3)"]
       interval: 10s
       timeout: 3s
       retries: 3
