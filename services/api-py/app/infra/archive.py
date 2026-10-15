@@ -19,6 +19,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_DB_PATH = Path(os.getenv("TICKS_DB_PATH", "data/ticks.db"))
 
 _VWAP_SQL = """
+    WITH retained AS (
+        SELECT price, volume, side, ts FROM trades WHERE symbol = ?
+    )
     SELECT
         COUNT(*),
         COALESCE(SUM(volume), 0),
@@ -26,14 +29,15 @@ _VWAP_SQL = """
         COALESCE(MIN(CAST(price AS REAL)), 0.0),
         COALESCE(MAX(CAST(price AS REAL)), 0.0),
         COALESCE(SUM(CASE WHEN side = 'BUY' THEN volume ELSE 0 END), 0),
-        COALESCE(SUM(CASE WHEN side = 'SELL' THEN volume ELSE 0 END), 0)
-    FROM trades
-    WHERE symbol = ?
+        COALESCE(SUM(CASE WHEN side = 'SELL' THEN volume ELSE 0 END), 0),
+        (SELECT ts FROM retained WHERE julianday(ts) IS NOT NULL ORDER BY julianday(ts), ts LIMIT 1),
+        (SELECT ts FROM retained WHERE julianday(ts) IS NOT NULL ORDER BY julianday(ts) DESC, ts DESC LIMIT 1)
+    FROM retained
 """
 
 
 def _vwap_row_to_stats(sym: str, row: tuple) -> dict[str, Any] | None:
-    trade_count, tot_vol, tot_val, min_p, max_p, buy_vol, sell_vol = row
+    trade_count, tot_vol, tot_val, min_p, max_p, buy_vol, sell_vol, first_ts, last_ts = row
     if not trade_count:
         return None
     tot_vol = int(tot_vol)
@@ -49,6 +53,10 @@ def _vwap_row_to_stats(sym: str, row: tuple) -> dict[str, Any] | None:
         "buy_volume": int(buy_vol),
         "sell_volume": int(sell_vol),
         "net_volume": int(buy_vol - sell_vol),
+        "coverage_start": first_ts,
+        "coverage_end": last_ts,
+        "scope": "retained_ticks",
+        "coverage_complete": False,
     }
 
 
@@ -115,6 +123,10 @@ class SQLiteArchive:
             "sell_volume_pct": sell_ratio,
             "flow_imbalance": round(buy_ratio - sell_ratio, 2),
             "vwap": stats["vwap"],
+            "coverage_start": stats["coverage_start"],
+            "coverage_end": stats["coverage_end"],
+            "scope": stats["scope"],
+            "coverage_complete": stats["coverage_complete"],
         }
 
 

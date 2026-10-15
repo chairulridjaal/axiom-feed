@@ -8,6 +8,9 @@ import asyncio
 import logging
 import os
 import zlib
+from typing import TypedDict
+
+from app.domain.models import Quote
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +59,27 @@ def decompress(raw: bytes) -> bytes:
         if fallback is not None:
             return fallback
     return raw
+
+
+class QuotePayload(TypedDict):
+    stock: str
+    price: float | None
+    open: float | None
+    high: float | None
+    low: float | None
+    time_str: str | None
+
+
+def quote_payload(quote: Quote) -> QuotePayload:
+    """Preserve source missingness and zero in embedded quote events."""
+    return {
+        "stock": quote.symbol,
+        "price": float(quote.last) if quote.last is not None else None,
+        "open": float(quote.open) if quote.open is not None else None,
+        "high": float(quote.high) if quote.high is not None else None,
+        "low": float(quote.low) if quote.low is not None else None,
+        "time_str": quote.ts.isoformat() if quote.ts is not None else None,
+    }
 
 
 async def run_embedded_ingest(provider, hub):
@@ -229,13 +253,7 @@ async def run_embedded_ingest(provider, hub):
                                         {
                                             "kind": "quote",
                                             "symbol": q.symbol,
-                                            "payload": {
-                                                "stock": q.symbol,
-                                                "price": float(q.last),
-                                                "open": float(q.open) if q.open else None,
-                                                "high": float(q.high) if q.high else None,
-                                                "low": float(q.low) if q.low else None,
-                                            },
+                                            "payload": quote_payload(q),
                                         }
                                     )
                                 elif which == "orderbook":

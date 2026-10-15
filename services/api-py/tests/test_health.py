@@ -33,7 +33,15 @@ def test_docs():
     assert r.status_code == 200
 
 
-def test_candles_normalized():
+def test_candles_normalized(monkeypatch):
+    from app.providers.stockbit.provider import get_provider
+
+    async def empty_candles(symbol, frm, to, resolution):
+        assert frm <= to
+        if False:
+            yield None
+
+    monkeypatch.setattr(get_provider(), "candles", empty_candles)
     r = client.get(
         "/v1/candles/BBCA",
         params={"from": "2026-08-26", "to": "2026-08-01", "resolution": "daily"},
@@ -200,7 +208,13 @@ def test_trades_endpoint_empty_ok():
     assert r2.status_code == 200
 
 
-def test_sectors_subsectors_handles_empty():
+def test_sectors_subsectors_handles_empty(monkeypatch):
+    from app.providers.stockbit.provider import get_provider
+
+    async def empty_sectors(*, max_bytes=None):
+        return {"data": []}
+
+    monkeypatch.setattr(get_provider(), "sector_list", empty_sectors)
     r = client.get("/v1/sectors")
     assert r.status_code == 200
     assert "sectors" in r.json()

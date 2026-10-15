@@ -16,12 +16,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from typing import Any
 
 import httpx
 import orjson
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
+
+from app.infra.candle_limits import CandleBudgetExceeded, CandleDataError
 
 logger = logging.getLogger(__name__)
 
@@ -214,7 +216,10 @@ class HttpxTransport:
         url: str,
         params: dict[str, Any] | None = None,
         array_key: str = "data",
-    ) -> AsyncIterator[dict[str, Any]]:
+        *,
+        max_bytes: int | None = None,
+        max_object_bytes: int | None = None,
+    ) -> AsyncGenerator[dict[str, Any], None]:
         await self.limiter.acquire()
         async with self.semaphore():
             async with self.client().stream("GET", url, params=params) as resp:
@@ -227,18 +232,31 @@ class HttpxTransport:
                             await asyncio.sleep(1)
                 resp.raise_for_status()
                 buf = bytearray()
+                # Strict candles retain at most max_bytes for whole-envelope validation.
+                validation_wire = bytearray() if max_bytes is not None else None
                 in_array = False
                 in_string = False
                 escape = False
                 brace_depth = 0
                 obj_start = -1
                 yielded_any = False
+                yielded_count = 0
                 i = 0
                 consumed_index = 0
 
-                async for chunk in resp.aiter_bytes():
+                async for chunk in resp.aiter_bytes(chunk_size=65536):
+                    if validation_wire is not None and max_bytes is not None:
+                        if len(validation_wire) + len(chunk) > max_bytes:
+                            raise CandleBudgetExceeded("upstream bytes", max_bytes)
+                        validation_wire.extend(chunk)
                     buf.extend(chunk)
                     while i < len(buf):
+                        if (
+                            obj_start >= 0
+                            and max_object_bytes is not None
+                            and i - obj_start + 1 > max_object_bytes
+                        ):
+                            raise CandleBudgetExceeded("upstream object bytes", max_object_bytes)
                         c = buf[i]
                         if in_string:
                             if escape:
@@ -277,10 +295,14 @@ class HttpxTransport:
                                 try:
                                     item = orjson.loads(raw_obj)
                                     if isinstance(item, dict):
+                                        yielded_count += 1
                                         yield item
                                         yielded_any = True
-                                except Exception:
-                                    pass
+                                except orjson.JSONDecodeError as exc:
+                                    if max_bytes is not None:
+                                        raise CandleDataError(
+                                            "Malformed upstream candle JSON"
+                                        ) from exc
                                 consumed_index = i + 1
                                 obj_start = -1
                                 if consumed_index > 65536:
@@ -296,6 +318,23 @@ class HttpxTransport:
                             continue
 
                         i += 1
+
+                if validation_wire is not None:
+                    try:
+                        envelope = orjson.loads(validation_wire)
+                    except orjson.JSONDecodeError as exc:
+                        raise CandleDataError(
+                            "Incomplete or malformed upstream candle envelope"
+                        ) from exc
+                    if not isinstance(envelope, dict) or array_key not in envelope:
+                        raise CandleDataError("Missing upstream candle array")
+                    if not isinstance(envelope[array_key], list):
+                        raise CandleDataError("Invalid upstream candle array")
+                    if not all(isinstance(row, dict) for row in envelope[array_key]):
+                        raise CandleDataError("Invalid upstream candle row type")
+                    if yielded_count != len(envelope[array_key]):
+                        raise CandleDataError("Ambiguous upstream candle arrays")
+                    return
 
                 if consumed_index > 0 and consumed_index < len(buf):
                     del buf[:consumed_index]

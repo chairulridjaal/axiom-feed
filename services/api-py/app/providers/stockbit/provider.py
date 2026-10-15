@@ -2,9 +2,9 @@
 
 Uses HttpxTransport (Limits 20, tenacity, 10 rps) + mapping + BoundedCache streaming.
 
-Historical candles: window slicing 365d daily / 90d intraday (env-configurable),
-httpx.stream per window, incremental orjson, per-window retry, Semaphore(4),
-StreamingResponse yields Candle one-by-one — never 60MB response.json().
+Historical candles are consumed incrementally by bounded source windows.
+Complete OHLC/volume/timestamp rows are required; no synthetic fallback bars.
+The REST surface enforces finite date, row, byte and elapsed-time budgets.
 """
 
 from __future__ import annotations
@@ -12,18 +12,30 @@ from __future__ import annotations
 import logging
 import os
 from collections import deque
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
+from contextlib import aclosing
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
 
 from app.domain.models import Book, Candle, KeyStats, Mover, Quote, Resolution, Symbol, Trade
+from app.infra.candle_limits import (
+    MAX_CANDLE_BYTES,
+    MAX_CANDLE_LINE_BYTES,
+    MAX_CANDLES,
+    MAX_DAILY_DAYS,
+    MAX_MINUTE_DAYS,
+    MAX_SCANNED_CANDLES,
+    CandleBudgetExceeded,
+    CandleDataError,
+)
 from app.infra.tick_store import TickStore
 
+from .candle_rows import parse_source_candle
 from .mapping import (
+    WIB_TZ,
     build_daily_params,
     build_intraday_params,
-    map_candle_dict,
     map_liveprice_to_quote,
     map_orderbook_body_to_book,
     map_running_trade_to_domain,
@@ -209,137 +221,50 @@ class StockbitProvider:
 
     async def candles(
         self, symbol: Symbol, frm: date, to: date, resolution: Resolution
-    ) -> AsyncIterator[Candle]:
-        from datetime import datetime
-
+    ) -> AsyncGenerator[Candle, None]:
+        """Yield complete source OHLC rows incrementally; never invent fallback bars."""
         symbol = symbol.upper().strip()
         frm, to = normalize_range(frm, to)
-
-        if resolution == "daily":
-            # Dynamic window slicing for multi-year ranges (>365d) to prevent upstream truncation
-            found_any = False
-            seen_ts: set[int] = set()
-
-            if (to - frm).days > SLICE_DAILY:
-                import asyncio
-
-                windows: list[tuple[date, date]] = []
-                cur = frm
-                while cur <= to:
-                    nxt = min(cur + timedelta(days=SLICE_DAILY - 1), to)
-                    windows.append((cur, nxt))
-                    cur = nxt + timedelta(days=1)
-
-                async def _fetch_daily_window(w_frm: date, w_to: date) -> list[Candle]:
-                    # Throttling lives in HttpxTransport (rate limiter + semaphore);
-                    # no second gate here.
-                    url = f"{EXODUS}/chartbit/{symbol}/price/daily"
-                    params = build_daily_params(w_frm, w_to)
-                    out: list[Candle] = []
-                    try:
-                        async for d in self.transport.stream_json_array(url, params=params):
-                            c = map_candle_dict(d)
-                            if c:
-                                out.append(c)
-                    except Exception as e:
-                        logger.warning(f"daily candle window {w_frm}->{w_to} failed: {e}")
-                    return out
-
-                results = await asyncio.gather(*[_fetch_daily_window(a, b) for a, b in windows])
-                for batch in results:
-                    for c in batch:
-                        key = int(c.ts.timestamp())
-                        if key not in seen_ts:
-                            seen_ts.add(key)
-                            found_any = True
-                            yield c
-            else:
-                # Fast-path: single window query
+        max_days = MAX_DAILY_DAYS if resolution == "daily" else MAX_MINUTE_DAYS
+        if (to - frm).days > max_days:
+            raise CandleBudgetExceeded("range days", max_days)
+        slice_days = max(1, SLICE_DAILY if resolution == "daily" else SLICE_INTRADAY)
+        current = frm
+        seen_ts: set[int] = set()
+        scanned = 0
+        while current <= to:
+            window_end = min(current + timedelta(days=min(slice_days - 1, (to - current).days)), to)
+            if resolution == "daily":
                 url = f"{EXODUS}/chartbit/{symbol}/price/daily"
-                params = build_daily_params(frm, to)
-                try:
-                    async for d in self.transport.stream_json_array(url, params=params):
-                        c = map_candle_dict(d)
-                        if c:
-                            found_any = True
-                            key = int(c.ts.timestamp())
-                            if key not in seen_ts:
-                                seen_ts.add(key)
-                                yield c
-                except Exception:
-                    pass
-
-            # Fallback: if chartbit daily returned empty, use exodus /charts/{symbol}/daily (always has real daily prices)
-            if not found_any:
-                try:
-                    data = await self.transport.get_json(
-                        f"{EXODUS}/charts/{symbol}/daily?timeframe=1Y",
-                        label=f"charts fallback {symbol}",
-                    )
-                    prices = (
-                        data.get("data", {}).get("prices", []) if isinstance(data, dict) else []
-                    )
-                    for item in prices:
-                        dt_str = item.get("formatted_date", "")
-                        val_str = str(item.get("value", "0")).replace(",", "").strip()
-                        if dt_str and val_str and val_str != "0":
-                            try:
-                                d_obj = datetime.strptime(dt_str[:10], "%Y-%m-%d").date()
-                                if frm <= d_obj <= to:
-                                    p = Decimal(val_str)
-                                    ts = datetime.combine(d_obj, datetime.min.time())
-                                    if _WIB_TZ:
-                                        ts = ts.replace(tzinfo=_WIB_TZ)
-                                    c = Candle(
-                                        ts=ts,
-                                        open=p,
-                                        high=p,
-                                        low=p,
-                                        close=p,
-                                        volume=0,
-                                        value=Decimal("0"),
-                                    )
-                                    yield c
-                            except Exception:
-                                continue
-                except Exception as e:
-                    logger.debug(f"daily chart fallback failed: {e}")
-            return
-
-        # Intraday/minute resolution
-        import asyncio
-
-        slice_days = SLICE_INTRADAY
-        windows: list[tuple[date, date]] = []
-        cur = frm
-        while cur <= to:
-            nxt = min(cur + timedelta(days=slice_days - 1), to)
-            windows.append((cur, nxt))
-            cur = nxt + timedelta(days=1)
-
-        async def _fetch_window(w_from: date, w_to: date) -> list[Candle]:
-            url = f"{EXODUS}/chartbit/{symbol}/price/intraday"
-            params = build_intraday_params(w_from, w_to)
-            out: list[Candle] = []
-            try:
-                async for d in self.transport.stream_json_array(url, params=params):
-                    c = map_candle_dict(d)
-                    if c:
-                        out.append(c)
-            except Exception as e:
-                logger.warning(f"candle window {w_from}->{w_to} {resolution} failed: {e}")
-            return out
-
-        results = await asyncio.gather(*[_fetch_window(a, b) for a, b in windows])
-        seen_ts = set()
-        for batch in results:
-            for c in batch:
-                key = int(c.ts.timestamp())
-                if key in seen_ts:
-                    continue
-                seen_ts.add(key)
-                yield c
-        return
+                params = build_daily_params(current, window_end)
+            else:
+                url = f"{EXODUS}/chartbit/{symbol}/price/intraday"
+                params = build_intraday_params(current, window_end)
+            async with aclosing(
+                self.transport.stream_json_array(
+                    url,
+                    params=params,
+                    max_bytes=MAX_CANDLE_BYTES,
+                    max_object_bytes=MAX_CANDLE_LINE_BYTES,
+                )
+            ) as stream:
+                async for raw in stream:
+                    scanned += 1
+                    if scanned > MAX_SCANNED_CANDLES:
+                        raise CandleBudgetExceeded("scanned rows", MAX_SCANNED_CANDLES)
+                    candle = parse_source_candle(raw)
+                    source_date = candle.ts.astimezone(WIB_TZ).date()
+                    if not current <= source_date <= window_end:
+                        raise CandleDataError("Upstream candle date is outside requested window")
+                    key = int(candle.ts.timestamp())
+                    if key not in seen_ts:
+                        if len(seen_ts) >= MAX_CANDLES:
+                            raise CandleBudgetExceeded("rows", MAX_CANDLES)
+                        seen_ts.add(key)
+                        yield candle
+            if window_end == to:
+                return
+            current = window_end + timedelta(days=1)
 
     async def emitten_info(self, symbol: Symbol) -> dict[str, Any]:
         url = f"{EXODUS}/emitten/{symbol.upper()}/info"
@@ -507,16 +432,28 @@ class StockbitProvider:
             params["to"] = to or params["from"]
         return await self.transport.get_json(url, params=params, label=f"broker_summary({symbol})")
 
-    async def sector_list(self):
+    async def sector_list(self, *, max_bytes: int | None = None):
         url = f"{EXODUS}/emitten/sectors"
+        if max_bytes is not None:
+            from app.providers.stockbit.taxonomy_transport import bounded_taxonomy_json
+
+            return await bounded_taxonomy_json(self.transport, url, max_bytes)
         return await self.transport.get_json(url, label="sectors")
 
-    async def subsectors(self, sid: str):
+    async def subsectors(self, sid: str, *, max_bytes: int | None = None):
         url = f"{EXODUS}/emitten/sectors/{sid}/subsectors"
+        if max_bytes is not None:
+            from app.providers.stockbit.taxonomy_transport import bounded_taxonomy_json
+
+            return await bounded_taxonomy_json(self.transport, url, max_bytes)
         return await self.transport.get_json(url, label=f"subsectors({sid})")
 
-    async def sector_companies(self, sid: str, sub_id: str):
+    async def sector_companies(self, sid: str, sub_id: str, *, max_bytes: int | None = None):
         url = f"{EXODUS}/emitten/v3/sector/{sid}/subsector/{sub_id}/company"
+        if max_bytes is not None:
+            from app.providers.stockbit.taxonomy_transport import bounded_taxonomy_json
+
+            return await bounded_taxonomy_json(self.transport, url, max_bytes)
         return await self.transport.get_json(url, label=f"sector_companies({sid}/{sub_id})")
 
     async def brokers_top(
