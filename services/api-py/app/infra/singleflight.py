@@ -1,54 +1,49 @@
-"""Singleflight — in-flight request deduplication.
+"""Deduplicate bounded work independently of every request waiter's cancellation.
 
-Suppresses duplicate concurrent async operations for the same key.
-When multiple coroutines call singleflight.do(key, coro_fn), only the first
-coroutine executes coro_fn, while subsequent callers await the same result.
+The service uses asyncio-native transports and request cancellation. The producer
+is explicitly owned by this registry until completion or its finite deadline.
 """
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import Callable, Coroutine
-from typing import Any, TypeVar
+import asyncio  # Backend-native shielding with bounded registry ownership.
+import math
+from collections.abc import Awaitable, Callable
+from typing import Generic, TypeVar
 
 T = TypeVar("T")
 
 
-class Singleflight:
-    def __init__(self) -> None:
-        self._in_flight: dict[str, asyncio.Future[Any]] = {}
-        self._lock = asyncio.Lock()
+class Singleflight(Generic[T]):
+    def __init__(self, timeout_seconds: float = 30.0) -> None:
+        if not math.isfinite(timeout_seconds) or timeout_seconds < 0:
+            msg = "singleflight deadline must be finite and nonnegative"
+            raise ValueError(msg)
+        self._timeout_seconds = timeout_seconds
+        self._in_flight: dict[str, asyncio.Task[T]] = {}
 
-    async def do(self, key: str, coro_fn: Callable[[], Coroutine[Any, Any, T]]) -> T:
-        """Execute coro_fn once for key while in-flight; concurrent callers share result."""
-        fut: asyncio.Future[Any] | None = None
-        is_leader = False
+    async def do(self, key: str, coro_fn: Callable[[], Awaitable[T]]) -> T:
+        """Run once per key; cancelling any caller leaves shared work intact."""
+        task = self._in_flight.get(key)
+        if task is None:
+            # No await between lookup and registration: atomic on the event loop.
+            async def produce() -> T:
+                try:
+                    async with asyncio.timeout(self._timeout_seconds):
+                        return await coro_fn()
+                finally:
+                    self._in_flight.pop(key, None)
 
-        async with self._lock:
-            if key in self._in_flight:
-                fut = self._in_flight[key]
-            else:
-                loop = asyncio.get_running_loop()
-                fut = loop.create_future()
-                self._in_flight[key] = fut
-                is_leader = True
+            task = asyncio.create_task(produce(), name=f"singleflight:{key}")
+            self._in_flight[key] = task
+            task.add_done_callback(self._observe_completion)
+        return await asyncio.shield(task)
 
-        if not is_leader:
-            assert fut is not None
-            return await fut
-
-        try:
-            result = await coro_fn()
-            if not fut.cancelled():
-                fut.set_result(result)
-            return result
-        except BaseException as e:
-            if not fut.cancelled():
-                fut.set_exception(e)
-            raise
-        finally:
-            async with self._lock:
-                self._in_flight.pop(key, None)
+    @staticmethod
+    def _observe_completion(task: asyncio.Task[T]) -> None:
+        # An abandoned producer still has an owner that retrieves its exception.
+        if not task.cancelled():
+            task.exception()
 
     def in_flight_count(self) -> int:
         return len(self._in_flight)

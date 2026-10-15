@@ -44,7 +44,11 @@ async def _fetch_movers(kind: str):
     url = f"https://exodus.stockbit.com/order-trade/market-mover?mover_type={mover_type}&{boards}"
     try:
         data = await p.fetch(url, label=f"movers({kind})")
-        mover_list = data.get("data", {}).get("mover_list", []) if isinstance(data, dict) else []
+        if not isinstance(data, dict) or not isinstance(data.get("data"), dict):
+            raise HTTPException(502, "Invalid market movers response")
+        mover_list = data["data"].get("mover_list")
+        if not isinstance(mover_list, list):
+            raise HTTPException(502, "Invalid market movers response")
         res = []
         for it in mover_list:
             stock = it.get("stock_detail", {}).get("code", "")
@@ -66,8 +70,10 @@ async def _fetch_movers(kind: str):
                 }
             )
         return {"kind": kind, "movers": res}
-    except Exception:
-        return {"kind": kind, "movers": []}
+    except HTTPException:
+        raise
+    except Exception as exc:  # HTTP boundary: HTTP boundary
+        raise HTTPException(502, "Market movers unavailable") from exc
 
 
 @router.get("/v1/calendars/{type}")

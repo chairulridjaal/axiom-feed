@@ -21,14 +21,22 @@ const LAG_WATERMARK: u64 = 100_000;
 static SPOOL_ACTIVE: AtomicBool = AtomicBool::new(false);
 static SPOOL_QUEUED: AtomicU64 = AtomicU64::new(0);
 
-pub fn is_active() -> bool { SPOOL_ACTIVE.load(Ordering::Relaxed) }
-pub fn queued() -> u64 { SPOOL_QUEUED.load(Ordering::Relaxed) }
+pub fn is_active() -> bool {
+    SPOOL_ACTIVE.load(Ordering::Relaxed)
+}
+pub fn queued() -> u64 {
+    SPOOL_QUEUED.load(Ordering::Relaxed)
+}
 
-fn utc_now_rfc3339() -> String { chrono::Utc::now().to_rfc3339() }
+fn utc_now_rfc3339() -> String {
+    chrono::Utc::now().to_rfc3339()
+}
 
 /// WIB = UTC+7, no DST.
 fn wib_date_str() -> String {
-    (chrono::Utc::now() + chrono::Duration::hours(7)).format("%Y-%m-%d").to_string()
+    (chrono::Utc::now() + chrono::Duration::hours(7))
+        .format("%Y-%m-%d")
+        .to_string()
 }
 
 /// Build a lifecycle marker line. Also used by tests.
@@ -92,12 +100,15 @@ impl SegmentWriter {
         Ok(w)
     }
 
-    fn day_dir(&self) -> PathBuf { self.dir.join(&self.date) }
+    fn day_dir(&self) -> PathBuf {
+        self.dir.join(&self.date)
+    }
     fn sealed_path(&self, index: u64) -> PathBuf {
         self.day_dir().join(format!("events-{:05}.ndjson", index))
     }
     fn active_path(&self, index: u64) -> PathBuf {
-        self.day_dir().join(format!("events-{:05}.ndjson.active", index))
+        self.day_dir()
+            .join(format!("events-{:05}.ndjson.active", index))
     }
 
     fn rotate(&mut self, force: bool) -> std::io::Result<()> {
@@ -128,7 +139,10 @@ impl SegmentWriter {
         // recreated index 1 while sealed index 1 already held the morning data).
         self.index = next_free_index(&self.day_dir())?;
         self.active_path = self.active_path(self.index);
-        let file = OpenOptions::new().create(true).append(true).open(&self.active_path)?;
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.active_path)?;
         self.file = Some(BufWriter::new(file));
         self.bytes = 0;
         self.events_since_sync = 0;
@@ -138,7 +152,10 @@ impl SegmentWriter {
 
     fn write_line(&mut self, line: &str) -> std::io::Result<()> {
         self.rotate(false)?;
-        let f = match self.file.as_mut() { Some(f) => f, None => return Ok(()) };
+        let f = match self.file.as_mut() {
+            Some(f) => f,
+            None => return Ok(()),
+        };
         f.write_all(line.as_bytes())?;
         f.write_all(b"\n")?;
         self.bytes += line.len() as u64 + 1;
@@ -180,7 +197,9 @@ pub struct SpoolHandle {
 }
 
 impl SpoolHandle {
-    pub fn inactive() -> Self { Self { tx: None } }
+    pub fn inactive() -> Self {
+        Self { tx: None }
+    }
     pub fn lifecycle(&self, event: &str, detail: serde_json::Value) {
         if let Some(tx) = &self.tx {
             let _ = tx.send(lifecycle_line(event, detail));
@@ -191,7 +210,9 @@ impl SpoolHandle {
 /// Spawn the spool subscriber + writer. Returns a handle for lifecycle events.
 pub fn spawn(hub_tx: broadcast::Sender<String>) -> Option<SpoolHandle> {
     let dir = std::env::var("AXIOM_SPOOL_DIR").ok()?;
-    if dir.trim().is_empty() { return None; }
+    if dir.trim().is_empty() {
+        return None;
+    }
     let root = PathBuf::from(dir);
     if let Err(e) = std::fs::create_dir_all(&root) {
         error!("spool: cannot create {:?}: {} — spool disabled", root, e);
@@ -209,14 +230,22 @@ pub fn spawn(hub_tx: broadcast::Sender<String>) -> Option<SpoolHandle> {
                 Ok(msg) => {
                     let q = SPOOL_QUEUED.fetch_add(1, Ordering::Relaxed) + 1;
                     if q == LAG_WATERMARK {
-                        let _ = lag_tx.send(lifecycle_line("spool_lag", serde_json::json!({ "queued": q })));
+                        let _ = lag_tx.send(lifecycle_line(
+                            "spool_lag",
+                            serde_json::json!({ "queued": q }),
+                        ));
                         warn!("spool: {} events queued — writer falling behind", q);
                     }
-                    if lag_tx.send(msg).is_err() { break; }
+                    if lag_tx.send(msg).is_err() {
+                        break;
+                    }
                 }
                 Err(broadcast::error::RecvError::Lagged(n)) => {
                     warn!("spool: broadcast lagged {} — data may be lost", n);
-                    let _ = lag_tx.send(lifecycle_line("broadcast_lag", serde_json::json!({ "dropped": n })));
+                    let _ = lag_tx.send(lifecycle_line(
+                        "broadcast_lag",
+                        serde_json::json!({ "dropped": n }),
+                    ));
                 }
                 Err(broadcast::error::RecvError::Closed) => break,
             }
@@ -229,9 +258,13 @@ pub fn spawn(hub_tx: broadcast::Sender<String>) -> Option<SpoolHandle> {
     tokio::spawn(async move {
         let mut writer = match SegmentWriter::new(&root_clone) {
             Ok(w) => w,
-            Err(e) => { error!("spool: writer init failed: {}", e); return; }
+            Err(e) => {
+                error!("spool: writer init failed: {}", e);
+                return;
+            }
         };
-        let mut flush_tick = tokio::time::interval(std::time::Duration::from_millis(FSYNC_INTERVAL_MS));
+        let mut flush_tick =
+            tokio::time::interval(std::time::Duration::from_millis(FSYNC_INTERVAL_MS));
         flush_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tokio::select! {
@@ -316,11 +349,18 @@ mod tests {
         w.write_line("{\"next\":1}").unwrap();
 
         // The sealed files must be untouched.
-        assert!(std::fs::read_to_string(day_dir.join("events-00001.ndjson")).unwrap().contains("morning"));
-        assert!(std::fs::read_to_string(day_dir.join("events-00002.ndjson")).unwrap().contains("afternoon"));
+        assert!(std::fs::read_to_string(day_dir.join("events-00001.ndjson"))
+            .unwrap()
+            .contains("morning"));
+        assert!(std::fs::read_to_string(day_dir.join("events-00002.ndjson"))
+            .unwrap()
+            .contains("afternoon"));
         // And sealing the new segment must land on index 3.
         w.rotate(true).unwrap();
-        assert!(day_dir.join("events-00003.ndjson").exists(), "new segment seals to index 3");
+        assert!(
+            day_dir.join("events-00003.ndjson").exists(),
+            "new segment seals to index 3"
+        );
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -334,16 +374,26 @@ mod tests {
         let day_dir = tmp.join(&day);
         std::fs::create_dir_all(&day_dir).unwrap();
         std::fs::write(day_dir.join("events-00001.ndjson"), "{\"sealed\":1}\n").unwrap();
-        std::fs::write(day_dir.join("events-00001.ndjson.active"), "{\"leftover\":1}\n").unwrap();
+        std::fs::write(
+            day_dir.join("events-00001.ndjson.active"),
+            "{\"leftover\":1}\n",
+        )
+        .unwrap();
 
         let mut w = SegmentWriter::new(&tmp).unwrap();
-        assert_eq!(w.index, 2, "must continue at index 2, leaving sealed 1 intact");
+        assert_eq!(
+            w.index, 2,
+            "must continue at index 2, leaving sealed 1 intact"
+        );
         w.write_line("{\"n\":1}").unwrap();
-        w.last_sync = std::time::Instant::now() - std::time::Duration::from_millis(FSYNC_INTERVAL_MS + 10);
+        w.last_sync =
+            std::time::Instant::now() - std::time::Duration::from_millis(FSYNC_INTERVAL_MS + 10);
         w.flush_due().unwrap();
 
         // Sealed index 1 untouched; leftover active still there (operator decides).
-        assert!(std::fs::read_to_string(day_dir.join("events-00001.ndjson")).unwrap().contains("sealed"));
+        assert!(std::fs::read_to_string(day_dir.join("events-00001.ndjson"))
+            .unwrap()
+            .contains("sealed"));
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -354,17 +404,22 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
         let mut w = SegmentWriter::new(&tmp).unwrap();
-        w.write_line("{\"kind\":\"lifecycle\",\"event\":\"capture_start\"}").unwrap();
+        w.write_line("{\"kind\":\"lifecycle\",\"event\":\"capture_start\"}")
+            .unwrap();
 
         // Force the time threshold to have elapsed, then the periodic tick fires.
-        w.last_sync = std::time::Instant::now() - std::time::Duration::from_millis(FSYNC_INTERVAL_MS + 10);
+        w.last_sync =
+            std::time::Instant::now() - std::time::Duration::from_millis(FSYNC_INTERVAL_MS + 10);
         w.flush_due().unwrap();
 
         let day = wib_date_str();
         let active = tmp.join(&day).join("events-00001.ndjson.active");
         let contents = std::fs::read_to_string(&active).unwrap();
-        assert!(contents.contains("capture_start"), "event must be durably flushed, got: {:?}", contents);
+        assert!(
+            contents.contains("capture_start"),
+            "event must be durably flushed, got: {:?}",
+            contents
+        );
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }
-

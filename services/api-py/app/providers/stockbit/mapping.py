@@ -16,9 +16,11 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, date, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any
 from zoneinfo import ZoneInfo
+
+from google.protobuf.message import Message
 
 from app.domain.models import Board, Book, Candle, Level, Quote, Side, Trade
 
@@ -142,7 +144,13 @@ def map_liveprice_to_quote(lp: Any) -> Quote:
     # lp may be dict (REST) or proto object. Proto layout follows the official
     # client (stock_code/lastprice/date/prev + Change message); dict callers
     # use legacy stock/price/time_str keys — both are accepted here.
+    # Proto3 scalar zero lacks wire presence: treat it as unknown. Dict sources
+    # retain explicit zero because key presence is meaningful in those payloads.
+    present = {field.name for field, _ in lp.ListFields()} if isinstance(lp, Message) else None
+
     def _g(k, default=None):
+        if present is not None and k not in present:
+            return default
         if isinstance(lp, dict):
             return lp.get(k, default)
         return getattr(lp, k, default)
@@ -154,9 +162,22 @@ def map_liveprice_to_quote(lp: Any) -> Quote:
                 return v
         return default
 
+    def _d(value: Decimal | int | float | str | None) -> Decimal | None:
+        if value is None or value == "":
+            return None
+        try:
+            number = Decimal(str(value))
+        except InvalidOperation:
+            return None
+        return number if number.is_finite() else None
+
+    def _count(value: Decimal | int | float | str | None) -> int | None:
+        number = _d(value)
+        return int(number) if number is not None and number == number.to_integral_value() else None
+
     stock = str(_first("stock_code", "stock", "stock_symbol", default="")).upper()
-    price = Decimal(str(_first("lastprice", "price", default=0) or 0))
-    volume = int(float(_g("volume", 0) or 0))
+    price = _d(_first("lastprice", "price"))
+    volume = _count(_g("volume"))
     high = _g("high")
     low = _g("low")
     prev_close = _first("prev", "prev_close", "prevClose")
@@ -164,26 +185,20 @@ def map_liveprice_to_quote(lp: Any) -> Quote:
     avg = _g("average")
     value = _g("value")
     open_p = _g("open")
-    time_str = _first("date", "time_str", "time", "timestamp", default="")
+    time_str = _first("date", "time_str", "time", "timestamp")
     is_index = bool(_g("is_index", 0))
 
-    ts: datetime
-    if isinstance(time_str, str) and time_str:
-        try:
-            ts = datetime.fromisoformat(time_str.replace("Z", "+00:00"))
-            if ts.tzinfo is None:
-                ts = ts.replace(tzinfo=WIB_TZ)
-        except Exception:
-            ts = datetime.now(WIB_TZ)
-    elif isinstance(time_str, datetime):
-        ts = time_str
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=WIB_TZ)
-    else:
-        ts = datetime.now(WIB_TZ)
-
-    def _d(v):
-        return Decimal(str(v)) if v is not None else None
+    ts: datetime | None = None
+    match time_str:
+        case str() if time_str:
+            try:
+                ts = datetime.fromisoformat(time_str.replace("Z", "+00:00"))
+            except ValueError:
+                ts = None
+        case datetime():
+            ts = time_str
+    if ts is not None and ts.tzinfo is None:
+        ts = ts.replace(tzinfo=WIB_TZ)
 
     return Quote(
         symbol=stock,
@@ -192,9 +207,9 @@ def map_liveprice_to_quote(lp: Any) -> Quote:
         high=_d(high),
         low=_d(low),
         prev_close=_d(prev_close),
-        volume=volume if volume else None,
+        volume=volume,
         value=_d(value),
-        freq=int(float(freq)) if freq is not None else None,
+        freq=_count(freq),
         avg=_d(avg),
         ts=ts,
         is_index=is_index,

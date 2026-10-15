@@ -139,12 +139,12 @@ async def test_daily_candles_multi_year_window_slicing():
     # Mock transport.stream_json_array to count windows
     windows_called = []
 
-    async def mock_stream(url, params=None, array_key="data"):
+    async def mock_stream(url, params=None, array_key="data", **kwargs):
         p = params or {}
         windows_called.append((p.get("from"), p.get("to")))
         # Yield one sample candle per window
         yield {
-            "timestamp": 1704067200 + len(windows_called) * 86400 * 30,
+            "timestamp": p["from"],
             "open": "7500",
             "high": "7550",
             "low": "7450",

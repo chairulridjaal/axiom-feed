@@ -109,7 +109,16 @@ async fn main() -> anyhow::Result<()> {
         warn!("STOCKBIT_BEARER_TOKEN or WS_KEY empty — will connect once credentials available via redis/env");
     }
 
-    run_loop(ws_url, user_id, ws_key, bearer, initial_symbols, hub, spool_handle).await
+    run_loop(
+        ws_url,
+        user_id,
+        ws_key,
+        bearer,
+        initial_symbols,
+        hub,
+        spool_handle,
+    )
+    .await
 }
 
 async fn run_loop(
