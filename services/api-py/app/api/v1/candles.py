@@ -1,33 +1,35 @@
-"""GET /v1/candles/:symbol — streamed, sliced, cached, deduplicated.
-
-Never holds 60MB response.json() (be-web services/scrape.py + core/http_client.py).
-Uses httpx.stream + 365d/90d slicing + StreamingResponse yielding Candle JSON lines.
-
-Singleflight deduplication prevents thundering-herd on identical uncached keys.
-Cache: BoundedCache 100 keys + 50MB, tiered TTL (daily 24h, minute 60s).
-"""
+"""Bounded complete NDJSON responses; cache only successful candle series."""
 
 from __future__ import annotations
 
 import logging
+from contextlib import aclosing
 from datetime import date
-from typing import Any
 
 import orjson
-from fastapi import APIRouter, Depends, Query
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 
 from app.core.security import verify_api_key
+from app.domain.models import Resolution
 from app.infra.cache import BoundedCache
+from app.infra.candle_limits import (
+    MAX_CANDLE_BYTES,
+    MAX_CANDLE_LINE_BYTES,
+    MAX_CANDLES,
+    MAX_DAILY_DAYS,
+    MAX_MINUTE_DAYS,
+    CandleBudgetExceeded,
+)
 from app.infra.singleflight import Singleflight
 from app.providers.stockbit.provider import get_provider
 
 logger = logging.getLogger(__name__)
 router = APIRouter(dependencies=[Depends(verify_api_key)], tags=["Candles"])
-_candles_flight = Singleflight()
+_candles_flight: Singleflight[bytes] = Singleflight()
 
 
-def init_candles(cache: BoundedCache, flight: Singleflight | None = None):
+def init_candles(cache: BoundedCache, flight: Singleflight[bytes] | None = None):
     sf = flight or _candles_flight
 
     @router.get("/v1/candles/{symbol}")
@@ -35,89 +37,60 @@ def init_candles(cache: BoundedCache, flight: Singleflight | None = None):
         symbol: str,
         frm: date = Query(..., alias="from"),
         to: date = Query(..., alias="to"),
-        resolution: str = Query("daily", pattern="^(daily|minute)$"),
-    ):
-        if to < frm:
-            frm, to = to, frm
-        cache_key = f"candles:{resolution}:{symbol.upper()}:{frm.isoformat()}:{to.isoformat()}"
-        cached = cache.get(cache_key)
-        if cached is not None:
-            if isinstance(cached, (bytes, bytearray)):
+        resolution: Resolution = Query("daily"),
+    ) -> Response:
+        start, end = sorted((frm, to))
+        max_days = MAX_DAILY_DAYS if resolution == "daily" else MAX_MINUTE_DAYS
+        if (end - start).days > max_days:
+            raise HTTPException(422, f"Candle range exceeds {max_days} days for {resolution}")
+        cache_key = f"candles:{resolution}:{symbol.upper()}:{start.isoformat()}:{end.isoformat()}"
+        hit = cache.get(cache_key)
+        if isinstance(hit, bytes):
+            return Response(hit, media_type="application/x-ndjson", headers={"X-Cache": "HIT"})
 
-                async def _from_bytes():
-                    yield bytes(cached)
-
-                return StreamingResponse(
-                    _from_bytes(), media_type="application/x-ndjson", headers={"X-Cache": "HIT"}
-                )
-            cached_list: list[dict[str, Any]] = cached  # type: ignore[assignment]
-
-            async def _from_cache():
-                for c in cached_list:
-                    yield orjson.dumps(c) + b"\n"
-
-            return StreamingResponse(
-                _from_cache(), media_type="application/x-ndjson", headers={"X-Cache": "HIT"}
-            )
-
-        provider = get_provider()
-        MAX_CACHE_CANDLES = 20000
-        MAX_CACHE_BYTES = 5_000_000
-
-        async def _produce() -> bytes:
+        async def produce() -> bytes:
             buf = bytearray()
             count = 0
-            try:
-                async for c in provider.candles(symbol, frm, to, resolution):  # type: ignore[arg-type]
-                    d = {
-                        "ts": c.ts.isoformat(),
-                        "open": str(c.open),
-                        "high": str(c.high),
-                        "low": str(c.low),
-                        "close": str(c.close),
-                        "volume": c.volume,
-                        "value": str(c.value),
-                        "freq": c.freq,
-                    }
-                    buf.extend(orjson.dumps(d))
-                    buf.append(10)  # \n
+            provider = get_provider()
+            async with aclosing(provider.candles(symbol, start, end, resolution)) as stream:
+                async for c in stream:
                     count += 1
-            except Exception as e:
-                err_msg = str(e)
-                logger.error(f"candles stream failed {symbol} {frm}->{to} {resolution}: {err_msg}")
-                buf.extend(orjson.dumps({"error": err_msg}))
-                buf.append(10)
-                return bytes(buf)
-
+                    if count > MAX_CANDLES:
+                        raise CandleBudgetExceeded("rows", MAX_CANDLES)
+                    line = (
+                        orjson.dumps(
+                            {
+                                "ts": c.ts.isoformat(),
+                                "open": str(c.open),
+                                "high": str(c.high),
+                                "low": str(c.low),
+                                "close": str(c.close),
+                                "volume": c.volume,
+                                "value": str(c.value) if c.value is not None else None,
+                                "freq": c.freq,
+                            }
+                        )
+                        + b"\n"
+                    )
+                    if len(line) > MAX_CANDLE_LINE_BYTES:
+                        raise CandleBudgetExceeded("line bytes", MAX_CANDLE_LINE_BYTES)
+                    if len(buf) + len(line) > MAX_CANDLE_BYTES:
+                        raise CandleBudgetExceeded("serialized bytes", MAX_CANDLE_BYTES)
+                    buf.extend(line)
             payload = bytes(buf)
-            if count > 0 and count <= MAX_CACHE_CANDLES and len(payload) <= MAX_CACHE_BYTES:
-                try:
-                    cache.set(cache_key, payload, size=len(payload))
-                except Exception:
-                    pass
+            if count:
+                cache.set(cache_key, payload, size=len(payload))
             return payload
 
         try:
-            body: bytes = await sf.do(cache_key, _produce)
-            skipped_cache = len(body) > MAX_CACHE_BYTES
-        except Exception as e:
-            err_msg = str(e)
-            logger.error(f"candles produce failed {symbol} {frm}->{to} {resolution}: {err_msg}")
-
-            async def _from_error():
-                yield orjson.dumps({"error": err_msg}) + b"\n"
-
-            return StreamingResponse(
-                _from_error(), media_type="application/x-ndjson", headers={"X-Cache": "MISS"}
-            )
-
-        async def _stream_replay():
-            yield body
-
-        return StreamingResponse(
-            _stream_replay(),
-            media_type="application/x-ndjson",
-            headers={"X-Cache": "MISS" if not skipped_cache else "SKIP"},
-        )
+            body = await sf.do(cache_key, produce)
+        except CandleBudgetExceeded as exc:
+            raise HTTPException(413, str(exc)) from exc
+        except TimeoutError as exc:
+            raise HTTPException(504, "Candle request deadline exceeded") from exc
+        except Exception as exc:  # HTTP boundary: HTTP boundary
+            logger.warning("Candle provider unavailable for %s", symbol)
+            raise HTTPException(502, "Candle data unavailable") from exc
+        return Response(body, media_type="application/x-ndjson", headers={"X-Cache": "MISS"})
 
     return router

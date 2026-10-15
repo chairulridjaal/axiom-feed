@@ -175,3 +175,9 @@ curl -s http://127.0.0.1:8000/v1/quotes/BBCA | jq .
 # 4. Open Interactive OpenAPI Docs in browser
 # http://127.0.0.1:8000/docs
 ```
+
+## Positive equity-symbol reference
+
+`GET /v1/reference/symbols` uses the normal feed API-key protection. The immutable snapshot contains `source`, `scope`, `fetched_at`, `complete`, `count`, sorted unique `symbols`, and the SHA-256 of newline-joined symbols without a trailing newline. Scope `provider_equity_sector_taxonomy` selects the eleven reviewed equity-root IDs1–9,50,51; rows must explicitly be active Indonesian equities. Complete refers to every selected branch and its verified single page, not the entire IDX universe. Absence must never be interpreted as an invalid ticker.
+
+The producer has finite45second/256call/20,000row/10MBaggregate and1MBper-response bounds, checks actual received response bytes, rejects continuation/inconsistent pagination and upstream error envelopes, and caches only successful snapshots for30minutes. Failed refreshes return503 without publishing partial results or replacing the last valid snapshot. Consumers must apply their own age limit. Canceling a waiting request does not corrupt the shared producer or its immutable publication.

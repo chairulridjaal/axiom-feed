@@ -165,6 +165,7 @@ from app.api.v1 import insider as insider_mod
 from app.api.v1 import market as market_mod
 from app.api.v1 import news as news_mod
 from app.api.v1 import quotes as quotes_mod
+from app.api.v1 import reference as reference_mod
 from app.api.v1 import research as research_mod
 from app.api.v1 import screeners as screeners_mod
 from app.api.v1 import sectors as sectors_mod
@@ -182,6 +183,7 @@ app.include_router(books_mod.router)
 app.include_router(charts_mod.router)
 app.include_router(fund_mod.router)
 app.include_router(sectors_mod.router)
+app.include_router(reference_mod.router)
 app.include_router(brokers_mod.router)
 app.include_router(market_mod.router)
 app.include_router(estimates_mod.router)

@@ -8,7 +8,7 @@ Complete reference documentation for all endpoints provided by `axiom-feed`.
 
 - **Base URL**: `http://localhost:8000` (default)
 - **API Version Prefix**: `/v1`
-- **Timezone**: All timestamps are formatted in ISO 8601 with Asia/Jakarta (WIB, `UTC+07:00`).
+- **Timezone**: Live timestamps use ISO 8601, normally Asia/Jakarta (WIB, `UTC+07:00`). Source fallback dates and retained-tick bounds preserve the supplied value; timestamps can be missing, date-only, or use another explicit offset. A source date does not imply current freshness.
 - **Monetary & Decimal Precision**: Prices, valuations, changes, and ratios are serialized as JSON strings or raw decimal numbers to prevent floating-point rounding errors in algorithmic and quant execution pipelines.
 - **Authentication**:
   - Unauthenticated in local development mode (`API_KEY=""`).
@@ -95,7 +95,7 @@ curl -s http://localhost:8000/v1/ready | jq .
 ---
 
 ### `GET /v1/quotes/{symbol}`
-Returns real-time price quotation for an equity ticker or market index (`IHSG`). Falls back to Stockbit company master if live cache is unpopulated.
+Returns a live quote snapshot for an equity ticker or market index (`IHSG`), with company-info fallback when the live cache is unpopulated. `source` distinguishes `live_feed` from `company_info`; `ts` retains the source timestamp without implying freshness. Missing prices and optional observations are JSON null, while an observed zero remains the string `"0"`. `previous_price` is exposed only as `prev_close`, never as `last`. `status` is `observed` or `missing_last`; unavailable/invalid provider data returns `quote: null`. These field semantics also apply to batch quotes. Missing or invalid live source timestamps remain null; embedded quote events preserve the same missingness and source timestamp. Protobuf scalar zero without field presence is unknown, because proto3 does not distinguish absent from explicit default zero; dictionary payloads with explicit zero retain it.
 
 #### Parameters
 | Name | In | Type | Required | Description |
@@ -117,14 +117,10 @@ curl -s http://localhost:8000/v1/quotes/BBCA | jq .
     "high": "6725",
     "low": "6600",
     "prev_close": "6600",
-    "change": "+75.00",
-    "change_pct": "+1.14%",
-    "volume": 108537400,
-    "value": "723116960000",
-    "freq": 25753,
     "avg": "6661.28",
     "ts": "2026-09-02T16:15:00+07:00",
-    "is_index": false
+    "source": "live_feed",
+    "status": "observed"
   }
 }
 ```
@@ -301,7 +297,7 @@ curl -s "http://localhost:8000/v1/trades?symbols=BBCA&limit=5" | jq .
 ---
 
 ### `GET /v1/candles/{symbol}`
-Streams continuous historical candlestick bars line-by-line using NDJSON (`application/x-ndjson`). Automatically handles date normalization and window slicing (365 days for daily, 90 days for minute bars) without buffering multi-megabyte payloads in RAM.
+Returns a complete bounded historical series as NDJSON (`application/x-ndjson`). Date normalization and source window slicing remain supported. The source is consumed incrementally; the bounded serialized response is replayed only after every source window validates, so an upstream failure cannot appear as successful partial data.
 
 #### Parameters
 | Name | In | Type | Required | Default | Description |
@@ -600,12 +596,12 @@ curl -s "http://localhost:8000/v1/market/movers?kind=iev_top_gainers" | jq .
 
 ---
 
-## 11. IDX Sectors & Industry Taxonomy
+## 11. Provider Sectors & Industry Taxonomy
 
 ---
 
 ### `GET /v1/sectors`
-Returns all 11 official Indonesia Stock Exchange industry sectors.
+Returns the provider taxonomy roots. They include IDX equity sectors and other asset classes, such as currencies and crypto. An unavailable or malformed source returns HTTP 503; explicit valid empty lists retain their existing successful shape.
 
 #### Example Request
 ```bash
@@ -1383,3 +1379,27 @@ One IPO underwriter's track record: per-IPO first-day returns, ARA streaks, fund
 ```bash
 curl -s http://localhost:8000/v1/underwriters/YP/performance | jq .
 ```
+
+
+## Audit remediation: candle budgets, outages, and retained analytics
+
+Candle date spans use `(to - from).days` after normalization: at most 3,660 days for `daily`, and 31 days for `minute`. Excess spans return HTTP 422 before provider access. Responses allow at most 20,000 unique rows, 50,000 scanned upstream rows, 5,000,000 serialized bytes, and 65,536 bytes per NDJSON row. Each source window also has a 5,000,000-byte wire cap and a 65,536-byte object cap, including decompressed HTTP bytes. Exceeding a row or byte budget returns HTTP 413; upstream or malformed/incomplete source data returns HTTP 502; exceeding the 30-second producer deadline returns HTTP 504. Limits are constants in `app/infra/candle_limits.py`; Singleflight supports an explicit finite constructor deadline. Failed or partial results never enter the candle cache. Successful NDJSON and `X-Cache: HIT/MISS` remain supported.
+
+Candle OHLC, volume, and timestamp must be supplied by the source. The close-only fallback no longer fabricates equal open/high/low/close prices or zero volume. Optional traded value and frequency can be null. No partial windows are silently omitted. Rows outside their requested source window are rejected; date comparisons use Asia/Jakarta calendar dates, including source timestamps with other explicit offsets. Whole-envelope wire validation uses a buffer bounded by the per-window wire cap.
+
+Shared in-flight work continues independently when any individual requester cancels, including the first requester. The producer remains owned by its registry until completion or the configured finite deadline; abandoned exceptions are retrieved.
+
+`GET /v1/market/movers` returns HTTP 502 for unavailable or malformed provider results. An explicit empty `mover_list` remains successful and cacheable; provider failures are never cached as an empty market.
+
+`GET /v1/analytics/vwap/{symbol}` and `/v1/analytics/flow/{symbol}` continue to aggregate all retained ticks for the requested symbol. Both now return `coverage_start`, `coverage_end`, `scope: "retained_ticks"`, and `coverage_complete: false`. Bounds identify retained sample timestamps and compare valid source instants across timezone offsets. These values do not establish a complete session, market-wide tape, sampling rate, or requested historical window; pruning and collection gaps can exist. Empty retained data still returns HTTP 404.
+
+
+### GET /v1/reference/symbols
+
+Authenticated positive symbol catalogue for orchestration. The source is Stockbit sector taxonomy, restricted to the reviewed equity root IDs 1, 2, 3, 4, 5, 6, 7, 8, 9, 50, 51. All eleven IDs must be present with valid top-level metadata. Every selected subsector/company response must validate as one complete page; missing roots, malformed metadata, remaining pages/cursors, failed sources, or budget exhaustion return HTTP 503. Explicit complete empty company pages are accepted; empty selected subsector lists fail conservatively.
+
+The response contains source=stockbit_sector_taxonomy, scope=provider_equity_sector_taxonomy, fetched_at (UTC ISO 8601), complete=true, count, symbols, and checksum. Here complete means traversal of all selected reviewed equity-sector branches. It does not establish a complete IDX security directory. Only rows classified by the provider as type_company=Saham, country=ID, company_status=STATUS_ACTIVE enter positive membership. Suspended, delisted, foreign, and other asset rows are excluded; a missing symbol remains unknown rather than invalid.
+
+Symbols are sorted unique uppercase strings. Checksum is SHA-256 of their UTF-8 values joined with a newline, without a final newline. Snapshots are immutable, cached for 1,800 seconds, and refreshed through one shared bounded producer. The limits are 256 provider calls, 20,000 scanned rows, 10,000,000 actual decompressed source bytes in total, 1,000,000 bytes per response, and 45 seconds. Successful refresh alone replaces the last good snapshot. After expiry, failed refresh returns HTTP 503; no stale or partial success is served. Individual requester cancellation does not cancel shared refresh.
+
+Sector/subsector/company routes preserve their successful response shapes, validate source envelopes before caching, cap each response at 1,000,000 decompressed bytes, and return HTTP 503 for unavailable/malformed responses. Their path identifiers allow only letters, digits, underscores and hyphens.
