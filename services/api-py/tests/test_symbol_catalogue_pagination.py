@@ -1,4 +1,5 @@
 import pytest
+from pydantic import JsonValue, TypeAdapter
 from test_symbol_catalogue import TaxonomyProvider, company
 
 
@@ -67,7 +68,7 @@ def test_nested_provider_failure_never_becomes_positive_membership(nested):
 
     raw = {"data": {"companies": [company("BBCA")], **nested}}
     with pytest.raises(CatalogueError):
-        company_symbols(raw)
+        company_symbols(TypeAdapter(JsonValue).validate_python(raw))
 
 
 def test_inner_metadata_cannot_hide_outer_incomplete_count():

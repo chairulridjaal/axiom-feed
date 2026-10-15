@@ -128,7 +128,7 @@ def test_candle_exact_byte_limit_and_cache_parity(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_empty_primary_never_fabricates_ohlc():
+async def test_empty_primary_never_fabricates_ohlc(monkeypatch):
     async def stream(*args, **kwargs):
         if False:
             yield {}
@@ -137,7 +137,12 @@ async def test_empty_primary_never_fabricates_ohlc():
         return {"data": {"prices": [{"formatted_date": "2026-10-01", "value": "105"}]}}
 
     provider = StockbitProvider.__new__(StockbitProvider)
-    provider.transport = SimpleNamespace(stream_json_array=stream, get_json=fallback)
+    monkeypatch.setattr(
+        provider,
+        "transport",
+        SimpleNamespace(stream_json_array=stream, get_json=fallback),
+        raising=False,
+    )
     result = [
         c async for c in provider.candles("BBCA", date(2026, 10, 1), date(2026, 10, 2), "daily")
     ]
@@ -145,13 +150,15 @@ async def test_empty_primary_never_fabricates_ohlc():
 
 
 @pytest.mark.asyncio
-async def test_failed_daily_window_is_not_silently_omitted():
+async def test_failed_daily_window_is_not_silently_omitted(monkeypatch):
     async def stream(*args, **kwargs):
         raise httpx.ReadError("offline window failure")
         yield {}
 
     provider = StockbitProvider.__new__(StockbitProvider)
-    provider.transport = SimpleNamespace(stream_json_array=stream)
+    monkeypatch.setattr(
+        provider, "transport", SimpleNamespace(stream_json_array=stream), raising=False
+    )
     with pytest.raises(httpx.ReadError):
         async for _ in provider.candles("BBCA", date(2020, 1, 1), date(2022, 1, 1), "daily"):
             pass
@@ -165,14 +172,16 @@ async def test_failed_daily_window_is_not_silently_omitted():
         {"timestamp": "invalid", "open": 100, "high": 110, "low": 90, "close": 105, "volume": 10},
     ],
 )
-async def test_incomplete_candle_source_never_creates_ohlc_or_timestamp(raw):
+async def test_incomplete_candle_source_never_creates_ohlc_or_timestamp(raw, monkeypatch):
     from app.infra.candle_limits import CandleDataError
 
     async def stream(*args, **kwargs):
         yield raw
 
     provider = StockbitProvider.__new__(StockbitProvider)
-    provider.transport = SimpleNamespace(stream_json_array=stream)
+    monkeypatch.setattr(
+        provider, "transport", SimpleNamespace(stream_json_array=stream), raising=False
+    )
     with pytest.raises(CandleDataError):
         async for _ in provider.candles("BBCA", date(2026, 10, 1), date(2026, 10, 2), "daily"):
             pass
@@ -230,7 +239,9 @@ async def test_provider_counts_duplicate_scanned_rows(monkeypatch):
 
     monkeypatch.setattr(provider_module, "MAX_SCANNED_CANDLES", 2)
     provider = StockbitProvider.__new__(StockbitProvider)
-    provider.transport = SimpleNamespace(stream_json_array=stream)
+    monkeypatch.setattr(
+        provider, "transport", SimpleNamespace(stream_json_array=stream), raising=False
+    )
     with pytest.raises(CandleBudgetExceeded):
         async for _ in provider.candles("BBCA", date(2026, 10, 1), date(2026, 10, 2), "daily"):
             pass
@@ -238,7 +249,7 @@ async def test_provider_counts_duplicate_scanned_rows(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_provider_rejects_outside_requested_dates():
+async def test_provider_rejects_outside_requested_dates(monkeypatch):
     from app.infra.candle_limits import CandleDataError
 
     async def stream(*args, **kwargs):
@@ -252,7 +263,9 @@ async def test_provider_rejects_outside_requested_dates():
         }
 
     provider = StockbitProvider.__new__(StockbitProvider)
-    provider.transport = SimpleNamespace(stream_json_array=stream)
+    monkeypatch.setattr(
+        provider, "transport", SimpleNamespace(stream_json_array=stream), raising=False
+    )
     with pytest.raises(CandleDataError):
         async for _ in provider.candles("BBCA", date(2026, 10, 1), date(2026, 10, 2), "daily"):
             pass
@@ -269,7 +282,7 @@ async def test_provider_rejects_outside_requested_dates():
         ("2026-10-02T17:00:00Z", False),
     ],
 )
-async def test_provider_scope_uses_jakarta_dates(resolution, stamp, accepted):
+async def test_provider_scope_uses_jakarta_dates(resolution, stamp, accepted, monkeypatch):
     from app.infra.candle_limits import CandleDataError
 
     # Given a source row straddling a Jakarta date boundary.
@@ -277,7 +290,9 @@ async def test_provider_scope_uses_jakarta_dates(resolution, stamp, accepted):
         yield {"timestamp": stamp, "open": 100, "high": 110, "low": 90, "close": 105, "volume": 10}
 
     provider = StockbitProvider.__new__(StockbitProvider)
-    provider.transport = SimpleNamespace(stream_json_array=stream)
+    monkeypatch.setattr(
+        provider, "transport", SimpleNamespace(stream_json_array=stream), raising=False
+    )
     # When retrieving the requested local dates, then only their instants are accepted.
     if accepted:
         rows = [

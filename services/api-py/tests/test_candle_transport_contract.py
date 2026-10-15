@@ -1,3 +1,4 @@
+from asyncio import Semaphore
 from types import SimpleNamespace
 
 import anyio
@@ -33,7 +34,7 @@ class Chunks(httpx.AsyncByteStream):
     ],
 )
 async def test_strict_candle_transport_rejects_excess_or_incomplete_wire(
-    chunks, limit, object_limit
+    chunks, limit, object_limit, monkeypatch
 ):
     # Given: an offline streamed response through the real HTTP adapter.
     body = Chunks(chunks)
@@ -46,8 +47,8 @@ async def test_strict_candle_transport_rejects_excess_or_incomplete_wire(
     ) as client:
         transport = HttpxTransport.__new__(HttpxTransport)
         transport.client = lambda: client
-        transport.limiter = SimpleNamespace(acquire=acquire)
-        transport.semaphore = lambda: anyio.Semaphore(1)
+        monkeypatch.setattr(transport, "limiter", SimpleNamespace(acquire=acquire), raising=False)
+        transport.semaphore = lambda: Semaphore(1)
         # When: consuming the strict candle transport contract.
         with pytest.raises((ValueError, RuntimeError)):
             async for _ in transport.stream_json_array(
@@ -59,7 +60,7 @@ async def test_strict_candle_transport_rejects_excess_or_incomplete_wire(
 
 
 @pytest.mark.asyncio
-async def test_strict_candle_transport_accepts_exact_budget():
+async def test_strict_candle_transport_accepts_exact_budget(monkeypatch):
     wire = b'{"data":[{"close":1}]}'
     body = Chunks([wire])
 
@@ -71,8 +72,8 @@ async def test_strict_candle_transport_accepts_exact_budget():
     ) as client:
         transport = HttpxTransport.__new__(HttpxTransport)
         transport.client = lambda: client
-        transport.limiter = SimpleNamespace(acquire=acquire)
-        transport.semaphore = lambda: anyio.Semaphore(1)
+        monkeypatch.setattr(transport, "limiter", SimpleNamespace(acquire=acquire), raising=False)
+        transport.semaphore = lambda: Semaphore(1)
         result = [
             row
             async for row in transport.stream_json_array(
@@ -86,7 +87,7 @@ async def test_strict_candle_transport_accepts_exact_budget():
 
 
 @pytest.mark.asyncio
-async def test_cancelled_strict_transport_closes_upstream():
+async def test_cancelled_strict_transport_closes_upstream(monkeypatch):
     started = anyio.Event()
 
     class Blocked(Chunks):
@@ -105,8 +106,8 @@ async def test_cancelled_strict_transport_closes_upstream():
     ) as client:
         transport = HttpxTransport.__new__(HttpxTransport)
         transport.client = lambda: client
-        transport.limiter = SimpleNamespace(acquire=acquire)
-        transport.semaphore = lambda: anyio.Semaphore(1)
+        monkeypatch.setattr(transport, "limiter", SimpleNamespace(acquire=acquire), raising=False)
+        transport.semaphore = lambda: Semaphore(1)
 
         async def consume():
             async for _ in transport.stream_json_array(

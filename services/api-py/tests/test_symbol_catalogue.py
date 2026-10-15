@@ -4,13 +4,15 @@ from hashlib import sha256
 import anyio
 import httpx
 import pytest
+from anyio.lowlevel import checkpoint
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pydantic import JsonValue, TypeAdapter
 
 from app.core.security import verify_api_key
 
 
-def company(symbol, **changes):
+def company(symbol: str, **changes: JsonValue) -> dict[str, JsonValue]:
     return {
         "symbol": symbol,
         "type_company": "Saham",
@@ -31,22 +33,24 @@ class TaxonomyProvider:
             ]
         }
         self.children = {"data": [{"id": 15, "name": "Banks"}]}
-        self.companies = {"data": [company("BBRI"), company("BBCA"), company("BBCA")]}
+        self.companies: dict[str, JsonValue] = {
+            "data": [company("BBRI"), company("BBCA"), company("BBCA")]
+        }
 
-    async def sector_list(self, *, max_bytes=None):
+    async def sector_list(self, *, max_bytes: int) -> JsonValue:
         self.calls["root"] += 1
-        await anyio.lowlevel.checkpoint()
+        await checkpoint()
         if self.failure:
             raise httpx.ReadError("synthetic outage")
-        return self.root
+        return TypeAdapter(JsonValue).validate_python(self.root)
 
-    async def subsectors(self, sid, *, max_bytes=None):
+    async def subsectors(self, sid: str, *, max_bytes: int) -> JsonValue:
         self.calls["children"] += 1
-        return self.children
+        return TypeAdapter(JsonValue).validate_python(self.children)
 
-    async def sector_companies(self, sid, sub_id, *, max_bytes=None):
+    async def sector_companies(self, sid: str, sub_id: str, *, max_bytes: int) -> JsonValue:
         self.calls["companies"] += 1
-        return self.companies
+        return TypeAdapter(JsonValue).validate_python(self.companies)
 
 
 @pytest.mark.asyncio

@@ -161,11 +161,14 @@ def test_embedded_quote_payload_preserves_missing_and_zero(price):
 
 
 def test_proto_default_price_is_not_an_observed_zero():
-    from app.providers.stockbit.generated.datafeed_pb2 import LivePrice
+    from importlib import import_module
+
     from app.providers.stockbit.mapping import map_liveprice_to_quote
 
     # Given a proto3 message without price presence (zero has the same wire encoding).
-    source = LivePrice(stock_code="BBCA", prev=100)
+    source = import_module("app.providers.stockbit.generated.datafeed_pb2").LivePrice(
+        stock_code="BBCA", prev=100
+    )
     # When the mapper receives it, then it cannot claim an observed zero.
     mapped = map_liveprice_to_quote(source)
     assert mapped.last is None

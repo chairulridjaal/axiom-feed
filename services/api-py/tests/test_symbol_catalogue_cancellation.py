@@ -1,5 +1,6 @@
 import anyio
 import pytest
+from pydantic import JsonValue
 from test_symbol_catalogue import TaxonomyProvider
 
 
@@ -12,7 +13,7 @@ async def test_canceled_first_waiter_does_not_abort_complete_snapshot():
     canceled = anyio.Event()
 
     class PausedProvider(TaxonomyProvider):
-        async def sector_list(self, *, max_bytes=None):
+        async def sector_list(self, *, max_bytes: int) -> JsonValue:
             entered.set()
             await release.wait()
             return await super().sector_list(max_bytes=max_bytes)
@@ -49,7 +50,7 @@ async def test_catalogue_deadline_cancels_producer_without_publishing():
     closed = []
 
     class StuckProvider(TaxonomyProvider):
-        async def sector_list(self, *, max_bytes=None):
+        async def sector_list(self, *, max_bytes: int) -> JsonValue:
             try:
                 await anyio.sleep_forever()
             finally:
@@ -67,7 +68,7 @@ async def test_valid_empty_company_page_does_not_hide_other_positive_branches():
     from app.reference.catalogue import SymbolCatalogue
 
     class EmptyBranchProvider(TaxonomyProvider):
-        async def sector_companies(self, sid, sub_id, *, max_bytes=None):
+        async def sector_companies(self, sid: str, sub_id: str, *, max_bytes: int) -> JsonValue:
             if sid == "1":
                 return {
                     "data": [],
