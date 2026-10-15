@@ -178,25 +178,17 @@ async def test_transport_hot_swaps_bearer_on_401(monkeypatch):
     t = HttpxTransport(bearer_token="dead_bearer")
     seen_auth = []
 
-    class FakeResp:
-        def __init__(self, status):
-            self.status_code = status
-            self.headers = {}
-            self.content = b"{}"
-
-        def raise_for_status(self):
-            if self.status_code >= 400:
-                raise httpx.HTTPStatusError("err", request=None, response=self)
-
     class FakeClient:
         async def get(self, url, params=None, headers=None):
             auth = (headers or {}).get("Authorization", "") or (
                 f"Bearer {t.bearer}" if t.bearer else ""
             )
             seen_auth.append(auth)
-            if "dead_bearer" in auth:
-                return FakeResp(401)
-            return FakeResp(200)
+            return httpx.Response(
+                401 if "dead_bearer" in auth else 200,
+                request=httpx.Request("GET", url),
+                json={},
+            )
 
     fake_transport_client = FakeClient()
     monkeypatch.setattr(t, "client", lambda: fake_transport_client)

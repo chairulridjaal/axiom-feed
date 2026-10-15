@@ -57,5 +57,6 @@ def test_retained_bounds_compare_instants_across_offsets(tmp_path):
             ],
         )
     result = SQLiteArchive(db).calculate_vwap("BBCA")
+    assert result is not None
     assert result["coverage_start"] == "2026-10-09T08:00:00+07:00"
     assert result["coverage_end"] == "2026-10-09T02:00:00+00:00"
