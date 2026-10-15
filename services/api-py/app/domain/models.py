@@ -39,7 +39,7 @@ class Candle:
     low: Decimal
     close: Decimal
     volume: int
-    value: Decimal
+    value: Decimal | None
     freq: int | None = None
 
 
@@ -59,7 +59,7 @@ class Trade:
 @dataclass(frozen=True, slots=True)
 class Quote:
     symbol: Symbol
-    last: Decimal
+    last: Decimal | None
     open: Decimal | None
     high: Decimal | None
     low: Decimal | None
@@ -68,7 +68,7 @@ class Quote:
     value: Decimal | None
     freq: int | None
     avg: Decimal | None
-    ts: datetime
+    ts: datetime | None
     is_index: bool = False
 
 

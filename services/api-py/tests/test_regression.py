@@ -85,6 +85,83 @@ async def test_singleflight_subsequent_calls_after_completion():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("cancel_first", [True, False])
+async def test_singleflight_waiters_cancel_independently(cancel_first):
+    # Given: shared work blocked behind an explicit producer event.
+    sf = Singleflight()
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def work():
+        started.set()
+        await release.wait()
+        return 42
+
+    first = asyncio.create_task(sf.do("shared", work))
+    await started.wait()
+    second = asyncio.create_task(sf.do("shared", work))
+    # Synchronize waiter registration without a timing sleep.
+    entered = asyncio.Event()
+    asyncio.get_running_loop().call_soon(entered.set)
+    await entered.wait()
+    cancelled, survivor = (first, second) if cancel_first else (second, first)
+    # When: one waiter cancels before the producer completes.
+    cancelled.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await cancelled
+    release.set()
+    # Then: the other waiter retains its successful result and key is released.
+    assert await asyncio.wait_for(survivor, 1) == 42
+    assert sf.in_flight_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_singleflight_producer_deadline_releases_key():
+    # Given: a producer that never completes, with an immediate deadline.
+    sf = Singleflight(timeout_seconds=0)
+    blocked = asyncio.Event()
+    # When: awaiting it.
+    with pytest.raises(TimeoutError):
+        await sf.do("deadline", blocked.wait)
+    # Then: the key can be reused and no shared work remains.
+    assert sf.in_flight_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_singleflight_abandoned_failure_is_observed():
+    # Given: one waiter which abandons a failing producer.
+    sf = Singleflight()
+    started, release, finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    warnings = []
+    loop = asyncio.get_running_loop()
+    previous = loop.get_exception_handler()
+    loop.set_exception_handler(lambda _loop, context: warnings.append(context))
+
+    async def work():
+        started.set()
+        await release.wait()
+        finished.set()
+        raise ValueError("synthetic failure")
+
+    try:
+        caller = asyncio.create_task(sf.do("abandoned", work))
+        await started.wait()
+        # When: the only waiter cancels and the producer then fails.
+        caller.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await caller
+        release.set()
+        await asyncio.wait_for(finished.wait(), 1)
+        tick = asyncio.Event()
+        loop.call_soon(tick.set)
+        await tick.wait()
+        # Then: cleanup observes the exception instead of leaking a warning.
+        assert sf.in_flight_count() == 0
+        assert warnings == []
+    finally:
+        loop.set_exception_handler(previous)
+
+
+@pytest.mark.asyncio
 async def test_provider_methods_delegation():
     p = StockbitProvider()
     assert hasattr(p, "emitten_info")
